@@ -19,7 +19,7 @@ def test_time_format(time: str):
         except ValueError:
             return False
 
-def read_times_from_nav(navPath: str):
+def read_cut_times_from_nav(navPath: str):
     p = pl.Path(navPath)
     if (not p.exists()):
         message = navPath + " does not exist. Please provide a valid file path."
@@ -42,6 +42,21 @@ def read_times_from_nav(navPath: str):
     start = t1 - t0
     end = t2 - t0
     return [start, end]
+
+def read_time_offset_from_nav(navPath: str):
+    p = pl.Path(navPath)
+    if (not p.exists()):
+        message = navPath + " does not exist. Please provide a valid file path."
+        messagebox.showerror("Error", message)
+        raise FileExistsError(message)
+    elif (not p.is_file()):
+        message = navPath + " is not a regular file. Please provide a valid file path."
+        messagebox.showerror("Error", message)
+        raise FileExistsError(message)
+    df = pd.read_table(navPath, usecols=["HEURE", "CODEseq"])
+    idx = df.index[df["CODEseq"] == "FINFIL"]
+    t_string = df.at[idx[0], "HEURE"]
+    return t_string
 
 def cut_command(input, start, stop, output):
     ffmpeg_cmd = "ffmpeg -loglevel error -i \"{}\" -ss {} -to {} -vcodec h264 -y \"{}\"".format(input, start, stop, output)
@@ -99,7 +114,7 @@ def convert_nav_to_csv(
             messagebox.showerror("Error", message)
             raise Exception(message)
 
-        if (pl.Path(outPath).is_dir) :
+        if (pl.Path(outPath).is_dir()) :
             outFilepath = pl.PurePath(outPath).joinpath(outFilename + ".csv")
         else:
             outFilepath = inputFilepath.parent.joinpath(outFilename + ".csv")
@@ -402,3 +417,330 @@ def biigle_annot_to_yolo(
             if extract_annotated_frames(p, [s[0] for s in sorted_ids], videoname, outAnnotationsPath, outImagesPath):
                 messagebox.showinfo(title="Success", message="YOLO-formatted data and annoted frames for video {} have been written to {}".format(videoname, outPath))
 
+def interpolate_nav_data(
+    nav_days: pd.Series,
+    nav_times: pd.Series,
+    latitudes: pd.Series,
+    longitudes: pd.Series,
+    keytime: float,
+    timeoffset: pd.Timedelta):
+    """Takes info from Pagure nav file (timestamps, latitudes, longitudes) and a keytime in video and interpolates those data at this keytime.
+
+    Python script that takes info from an input navigation file (saved as pandas Series), a keytime (corresponding to time of video where the annotation is closest to the lasers),
+    and interpolates the absolute timestamp and GPS position (latitude + longitude) of the annotation (approximated to the pagure's position at this timestamp).
+
+    Args:
+        nav_days (pandas Series): List of the input data days read from nav file
+        nav_times (pandas Series): List of the input data timestamps read from nav file
+        latitudes (pandas Series): List of the input data latitudes read from nav file
+        longitudes (pandas Series): List of the input data longitudes read from nav file
+        keytime (float): Time in video where to interpolate the annotation timestamp and position
+        timeoffset (pandas Timedelta): If the video has been cut before being annotated, we have to count timestamps from nav file with an offset
+    """
+
+    if timeoffset == timedelta(0) :
+        time = timedelta(seconds=keytime)
+    else:
+        time = timeoffset + timedelta(seconds=keytime)
+
+    # Find rightmost value less than or equal to time in nav_times
+    i = bisect_right(nav_times, time)
+    if not i:
+        raise ValueError
+    # get time values wrapping time to compute interpolation coeff and latitude/longitude corresponding to these times
+    if (i==0):
+        t1, t2 = nav_times[0], nav_times[1]
+        lat1, lat2 = latitudes[0], latitudes[1]
+        lon1, lon2 = longitudes[0], longitudes[1]
+    else:
+        t1, t2 = nav_times[i-1], nav_times[i]
+        lat1, lat2 = latitudes[i-1], latitudes[i]
+        lon1, lon2 = longitudes[i-1], longitudes[i]
+    coeff = (time - t1) / (t2 - t1)
+    time_delta = t1 + coeff * (t2 - t1)
+    time_delta = nav_days[i] + time_delta
+    lat_delta = lat1 + coeff * (lat2 - lat1)
+    lon_delta = lon1 + coeff * (lon2 - lon1)
+    return time_delta, lat_delta, lon_delta
+
+def manual_detect_laserpoints(
+        label: str,
+        csvPath: str):
+    """Get the laserpoints positions from a CSV video annotation file (output from Biigle)
+
+    Python script that takes a CSV video annotation file from Biigle and the label used to annotate laserpoints in video, and returns a 2D-dictionnary dict(dict),
+    mapping a tuple of laser tracks to a video filename: {'video name': (laser_track_1, laser_track_2), ...}. If only one video in CSV file, len(dict) = 1.
+    Each laser track is a dict mapping a keyframe to a position in pixels in the image: {'time': coords}
+
+    Args:
+        label (str): Label used to annotate laserpoints in video inside biigle
+        csvPath (str): Full path to input video annotation file (must be a .csv)
+    """
+
+    if (not pl.Path(csvPath).exists()):
+        message = str(csvPath + "does not exist")
+        messagebox.showerror("Error", message)
+        raise FileNotFoundError(message)
+
+    data = pd.read_csv(csvPath)
+    laser_tracks = defaultdict(list)
+    label_data = data[data["label_name"].str.fullmatch(label, case=False)]
+    if label_data.empty:
+        messagebox.showerror("Error", "Could not find label {} in annotation file. Please verify your data.".format(label))
+    for row in label_data.itertuples():
+        video_filename = row.video_filename
+        # if we already found 2 laser tracks for this video, print error message and return
+        if len(laser_tracks[video_filename]) == 2:
+            message = "Invalid number of lasers found ({}) for video filename {}. Please verify your data.".format(len(track), video_filename)
+            messagebox.showerror(title='Error', message=message)
+            return
+        track = {}
+        times = row.frames
+        points = row.points
+        # times and points are strings, convert them to arrays
+        times = times[1:]
+        times = times[:-1]
+        times = times.split(",")    # array of strings: ['keyframe1', 'keyframe2', ...]
+        # for points column, we need to remove two firsts and lasts character ('[[' and ']]') and split string with '],[' as delimiter to find the arrays corresponding to each time
+        points = points[2:]
+        points = points[:-2]
+        points = points.split('],[')  # result is an array of strings: ['x11, x12, ...', 'x21, x22, ...' ...]
+        for count, time in enumerate(times):
+            coords = points[count]
+            coords = coords.split(',')
+            # fill a dictionnary with times as keys and annotation ids as values. We use try statement for time float conversion to handle gap case (null value) 
+            try:
+                t = float(time)
+                track.update({t: [float(coord) for coord in coords]})
+            except:     # time == null means there is a gap in annotation, skip and continue on next keyframe
+                continue
+        laser_tracks[video_filename].append(track)
+    return laser_tracks
+
+def eco_profiler(
+        csvPath: str,
+        navPath: str,
+        dy_max_str: float,
+        laser_tracks: dict,
+        laser_label : str = None,
+        laser_dist_str: str = None,
+        str_timeoffset: str = None,
+        outPath: str = None):
+
+    """Build the ecological profiler file with various informations about annotated organisms, from the CSV video annotation file from biigle, input metadata (nav file) and computed laser postions.
+
+    Python script that takes a CSV video annotation file from Biigle, a Pagure navigation file, laser tracks output from either manual or automatic detection and,
+    for each annotation clip (i.e. annotations with at least 2 frames), find the frame where the annotation is closest to the lasers, compute and fill an output CSV file with:
+        - video name
+        - time offset i.e. the absolute timestamp at which the video starts (may differ from first time in nav file if video has been cut)
+        for each annotation:
+            - time of the video where the measure is done
+            - absolute timestamp of the frame
+            - the label and label hierarchy of this annotation
+            - laser positions in the image (in pixels)
+            - distance between lasers at that frame (in pixels)
+            - annotation distance to lasers (in pixels)
+            - position of the annotation in the image (in pixels)
+            - computed GPS position of the organism at that timestamp
+            - size of the annotation in the image
+            - computed size of the organism
+
+    Args:
+        csvPath (str): Full path to input video annotation file (must be a .csv)
+        navPath (str): Full path to input navigation file (.txt or .csv)
+        timeOffset (str): time offset to start the timestamps count from nav file (str at format hh:mm:ss)
+        outPath (str): Full path to write the output file. Optionnal, by default the input file is overwritten
+    """
+    import math
+
+    if (not pl.Path(csvPath).exists()):
+        message = csvPath + "does not exist"
+        messagebox.showerror("Error", message)
+        raise FileNotFoundError(message)
+    p = pl.Path(outPath)
+    if p.is_dir():
+        if not p.exists():
+            p.mkdir()
+        outFilename = pl.PurePath(csvPath).stem
+        outFilepath = p.joinpath(outFilename + "_eco_profiler.csv")
+    else:
+        if not p.parent.exists():
+            p.parent.mkdir()
+        outFilepath = outPath
+
+    data_nav = pd.read_table(navPath)
+    nav_days = pd.to_datetime(data_nav["DATE"], dayfirst=True)
+    nav_times = pd.to_timedelta(data_nav["HEURE"])
+    if "LAT_PAGURE" and "LONG_PAGURE" in data_nav.columns:
+        latitudes = data_nav["LAT_PAGURE"]
+        longitudes = data_nav["LONG_PAGURE"]
+    else:
+        latitudes = data_nav["LAT_NAVIRE"]
+        longitudes = data_nav["LONG_NAVIRE"]
+
+    if not str_timeoffset:
+        time_offset = pd.to_timedelta(nav_times[0])
+    else:
+        try:
+            time_offset = pd.to_timedelta(str_timeoffset)
+        except ValueError as e:
+            print("error: failed to convert string time {} to timedelta".format(str_timeoffset), e)
+            time_offset = pd.to_timedelta(nav_times[0])
+
+    data = pd.read_csv(csvPath)
+    out_data = pd.DataFrame(index=data.index,
+                            columns=['video_annotation_label_id', 'video_filename', 'label_name', 'label_hierarchy',
+                                     'frame', 'timestamp', 'lasers_position_image', 'lasers_distance_image',
+                                     'annotation_position_image', 'annotation_GPS_position', 'annotation_size_pixels', 'annotation_size_cm'])
+
+    for row in data.itertuples():
+        video_annotation_label_id = row.video_annotation_label_id
+        video_filename = row.video_filename
+        label_name = row.label_name
+        out_data.loc[row.Index, "video_annotation_label_id"] = video_annotation_label_id
+        out_data.loc[row.Index, "video_filename"] = video_filename
+        out_data.loc[row.Index, "label_name"] = label_name
+        out_data.loc[row.Index, "label_hierarchy"] = row.label_hierarchy
+        shape_id = row.shape_id
+        if shape_id == 7:     # whole frame annotation
+            continue
+        if laser_label and label_name.lower() == laser_label.lower():    # laser annotation
+            continue
+        try:
+            attrs = row.attributes
+        except AttributeError:
+            message = "This method requires the 'attributes' column to be present in biigle annotation report. Please regenerate report if not (it was added from biigle reports module v4.29. All reports generated before july 2024 will not have it.)"
+            messagebox.showerror(title="Error: ", message=message)
+            raise AttributeError(message)
+        attrs_dict = json.loads(attrs)
+        height = attrs_dict["height"]
+        dy_max = float(dy_max_str) * 0.01 * height
+        # search for tracks in laser_tracks corresponding to this video
+        if not video_filename in laser_tracks:
+            message = "No laser annotation for video filename {}. Please verify your data.".format(video_filename)
+            messagebox.showerror(title="Error: ", message=message)
+            continue
+        track_l1 = laser_tracks[video_filename][0]
+        track_l2 = laser_tracks[video_filename][1]
+        if len(track_l1) == 0 or len(track_l2) == 0:
+            message = "At least one laser track is empty for video {}. Please verify your data.".format(video_filename)
+            messagebox.showerror(title="Error: ", message=message)
+            continue
+        dist_min = None
+        t_min = None
+        l1_min = None
+        l2_min = None
+        c_min = None
+        coords_min = None
+        times = row.frames
+        points = row.points
+        # times and points are strings, convert them to arrays
+        times = times[1:]
+        times = times[:-1]
+        times = times.split(",")    # array of strings: ['keyframe1', 'keyframe2', ...]
+        # for points column, we need to remove two firsts and lasts character ('[[' and ']]') and split string with '],[' as delimiter to find the arrays corresponding to each time
+        points = points[2:]
+        points = points[:-2]
+        points = points.split('],[')  # result is an array of strings: ['x11, x12, ...', 'x21, x22, ...' ...]
+        # Look in laser tracks for segment-keyframe where annotation should be interpolated with bisect-right method
+        kfs_l1 = list(track_l1.keys())
+        kfs_l2 = list(track_l2.keys())
+        for count, time in enumerate(times):
+            coords = points[count]
+            coords = coords.split(',')
+            try:
+                t = float(time)
+                # Find the two keyframe pairs tmin and tmax surrounding t in laser keyframes with bisect_right
+                pos_l1 = bisect_right(kfs_l1, t)
+                pos_l2 = bisect_right(kfs_l2, t)
+                if pos_l1 == 0 or pos_l2 == 0 or pos_l1 == len(kfs_l1) or pos_l2 == len(kfs_l2):
+                    raise ValueError("pos_l1 = {}, pos_l2 = {} and kfs_l1 = {}, kfs_l2 = {}".format(pos_l1, pos_l2, kfs_l1, kfs_l2))
+                tmin_l1, tmax_l1 = kfs_l1[pos_l1-1], kfs_l1[pos_l1]
+                tmin_l2, tmax_l2 = kfs_l2[pos_l2-1], kfs_l2[pos_l2]
+                # interpolate coordinates of lasers l1 and l2 at time t according to coordinates at tmin and tmax
+                cmin_l1, cmax_l1 = track_l1[tmin_l1], track_l1[tmax_l1]
+                coeff_l1 = (t - tmin_l1) / (tmax_l1 - tmin_l1)
+                icoords_l1 = (cmin_l1[0] + coeff_l1 * (cmax_l1[0] - cmin_l1[0]), cmin_l1[1] + coeff_l1 * (cmax_l1[1] - cmin_l1[1]))
+                cmin_l2, cmax_l2 = track_l2[tmin_l2], track_l2[tmax_l2]
+                coeff_l2 = (t - tmin_l2) / (tmax_l2 - tmin_l2)
+                icoords_l2 = (cmin_l2[0] + coeff_l2 * (cmax_l2[0] - cmin_l2[0]), cmin_l2[1] + coeff_l2 * (cmax_l2[1] - cmin_l2[1]))
+                # compute the equation of the line passing through both interpolated coords
+                if icoords_l2[0] - icoords_l1[0] == 0:
+                    print("Error: 2 laser coords mixed, this souldn't happen.")
+                    continue
+                a = (icoords_l2[1] - icoords_l1[1]) / (icoords_l2[0] - icoords_l1[0])
+                b = icoords_l1[1] - a * icoords_l1[0]
+                # convert string coords list to float and compute barycenter of the polygon annotation (except for points and circles)
+                coords = [float(coord) for coord in coords]
+                n = float(len(coords)/2)
+                # except for points or circles, compute the barycenter of the annotation
+                if shape_id != 1 and shape_id != 4:
+                    barycenter = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
+                else:
+                    barycenter = (coords[0], coords[1])
+                #  compute distance to laser line
+                dist = abs(barycenter[1] - a * barycenter[0] - b) / math.sqrt(1 + math.pow(a,2))
+                if dist_min == None or dist < dist_min:
+                    dist_min = dist
+                    t_min = t
+                    c_min = barycenter
+                    l1_min, l2_min = icoords_l1, icoords_l2
+                    coords_min = coords
+            except:     # time == null means there is a gap in annotation, skip and continue on next keyframe
+                print("couldn't find interpolation segment keyframes at {} for video {}, annotation {}".format(t, video_filename, video_annotation_label_id))
+                continue
+        if dist_min == None or t_min == None or l1_min == None or l2_min == None or c_min == None:
+            print("Error, couldn't compute one of the output value for annotation {} in video {}".format(video_annotation_label_id, video_filename))
+            continue
+        if (dist_min > dy_max):
+            message = "Found a minimum distance to lasers : {} pixels for annotation n°{} with label {}. It is more than {}% of the video height ({} pixels) which is set as the maximum distance to measure objects." \
+                    " Skip this annotation.".format(round(dist_min), video_annotation_label_id, label_name, dy_max_str, dy_max)
+            print(message)
+            # messagebox.showinfo(title="Info", message=message)
+            continue
+        timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t, time_offset)
+        if shape_id != 1:
+            # for circles we take diameter (2 * third coordinate) as size
+            if shape_id == 4:
+                annot_size_px = 2*coords_min[2]
+            # for lines we take total length (sum of segment lengths) as size
+            elif shape_id == 2:
+                annot_size_px = 0
+                # zip coordinates as (x, y) pairs then re-zip as points pairs pt1=(x1, y1) and pt2=(x2, y2) to compute segment lengths
+                coords_pts = list(zip(coords_min[::2], coords_min[1::2]))
+                for pt1, pt2 in zip(coords_pts, coords_pts[1:]):
+                    annot_size_px += math.dist(pt1, pt2)
+            # for rectangles we take diagonal as size. If it's a polygon with 4 points, assume it's close to parallelogram and take one diagonal
+            elif shape_id == 5 or len(coords_min) == 8:
+                pt1 = (coords_min[0], coords_min[1])
+                pt2 = (coords_min[4], coords_min[5])
+                annot_size_px = math.dist(pt1, pt2)
+            else:
+                messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(row.shape_name))
+                continue
+        laser_dist_px = math.dist(l1_min, l2_min)
+        if laser_dist_str and annot_size_px:
+            laser_dist = float(laser_dist_str)
+            annot_size = annot_size_px * laser_dist/laser_dist_px
+        l1_pos = (round(l1_min[0], 2), round(l1_min[1], 2))
+        l2_pos = (round(l2_min[0], 2), round(l2_min[1], 2))
+        out_data.loc[row.Index, "frame"] = round(t_min, 2)
+        out_data.loc[row.Index, "timestamp"] = timestamp
+        out_data.loc[row.Index, "lasers_position_image"] = l1_pos, l2_pos
+        out_data.loc[row.Index, "lasers_distance_image"] = round(laser_dist_px, 2)
+        out_data.loc[row.Index, "annotation_position_image"] = (round(c_min[0], 2), round(c_min[1], 2))
+        out_data.loc[row.Index, "annotation_GPS_position"] = latitude, longitude
+        out_data.loc[row.Index, "annotation_size_pixels"] = annot_size_px
+        out_data.loc[row.Index, "annotation_size_cm"] = annot_size
+    out_data.to_csv(outFilepath, index=False)
+    return True
+
+
+def auto_detect_laserpoints(input, output, device):
+    from components import detect_laserpoints
+    try:
+        detect_laserpoints.main([input, 'LP_detection\epoch_7.pth', 'LP_detection\ddod_r50.py', output, 'result.mp4', 'coco.json', '512', '0.5', '0.5', 'mmdet', device, 'True', '4', 'False'])
+        return True
+    except:
+        print("error")
+        return False
