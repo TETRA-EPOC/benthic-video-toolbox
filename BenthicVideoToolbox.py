@@ -302,29 +302,22 @@ class PostprocessPage(tk.Frame):
         self.laserpoints_label = ttk.Label(self.laserpoints_frame, text="Detect laserpoints inside video")
         self.laserpoints_label.pack(pady=10)
 
-        self.detect_button = ttk.Button(self.laserpoints_frame, text="Detect", command=self.detect_laserpoints, state="disabled")
-        self.detect_button.pack(side="right", padx=20, pady=10)
+        self.mode_frame = ttk.Frame(self.laserpoints_frame)
+        self.mode_frame.pack(anchor="w", padx=10, pady=10)
+        self.mode_label = ttk.Label(self.mode_frame, text="Detection mode:")
+        self.mode_label.pack(side="left", padx=10)
+        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual"], state='readonly', width=10)
+        self.mode_combobox.pack(side="left")
+        self.mode_combobox.bind("<<ComboboxSelected>>", self.laser_mode_widgets)
 
         self.manual_mode_frame = ttk.Frame(self.laserpoints_frame)
-        self.manual_laser_entry = ttk.Entry(self.manual_mode_frame, width=10)
-        self.manual_laser_entry.pack(side="right")
-        self.manual_laser_label = ttk.Label(self.manual_mode_frame, text="Label used to annotate laserpoints:")
-        self.manual_laser_label.pack(side="right", padx=10)
+        self.laser_label = ttk.Label(self.manual_mode_frame, text="Label used to annotate laserpoints:")
+        self.laser_label.pack(side="left", padx=10)
+        self.laser_label_entry = ttk.Entry(self.manual_mode_frame, width=10)
+        self.laser_label_entry.pack(side="left")
 
-        self.auto_mode_frame = ttk.Frame(self.laserpoints_frame)
-        self.device_combobox = ttk.Combobox(self.auto_mode_frame, values=["cpu", "cuda"], width=10)
-        self.device_combobox.pack(side="right")
-        self.device_label = ttk.Label(self.auto_mode_frame, text="Choose a device to run inference algo on:")
-        self.device_label.pack(side="right", padx=10)
-
-        self.mode_frame = ttk.Frame(self.laserpoints_frame)
-        self.mode_frame.pack(side="left", padx=10, pady=10)
-        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual"], state='readonly', width=8)
-                                                                #    , "automatic"], state='readonly', width=8)
-        self.mode_combobox.pack(side="right")
-        self.mode_combobox.bind("<<ComboboxSelected>>", self.laser_mode_widgets)
-        self.mode_label = ttk.Label(self.mode_frame, text="Choose a detection mode:")
-        self.mode_label.pack(side="right", padx=10)
+        self.detect_button = ttk.Button(self.laserpoints_frame, text="Detect", command=self.detect_laserpoints, state="disabled")
+        self.detect_button.pack(anchor="se", side="right", padx=20, pady=20)
 
         # build eco profiler export section
         self.eco_profiler_frame = ttk.Frame(self, relief=tk.GROOVE)
@@ -332,19 +325,19 @@ class PostprocessPage(tk.Frame):
         self.eco_profiler_label = ttk.Label(self.eco_profiler_frame, text="Build ecological profiler export")
         self.eco_profiler_label.pack(pady=10)
 
-        self.eco_profiler_button = ttk.Button(self.eco_profiler_frame, text="Export", command=self.eco_profiler)
-        self.eco_profiler_button.pack(side="right", padx=20, pady=10)
-
-        self.eco_threshold_entry = ttk.Entry(self.eco_profiler_frame, width=10)
-        self.eco_threshold_entry.insert(0, '10')
-        self.eco_threshold_entry.pack(side="right")
-        self.eco_threshold_label = ttk.Label(self.eco_profiler_frame, text="dy_max to measure annotations:\n(in % of video's height)")
-        self.eco_threshold_label.pack(side="right", padx=[20, 10], pady=10)
-
-        self.eco_laser_dist_entry = ttk.Entry(self.eco_profiler_frame, width=8)
-        self.eco_laser_dist_entry.pack(side="right")
         self.eco_laser_dist_label = ttk.Label(self.eco_profiler_frame, text="Distance between lasers in cm:")
-        self.eco_laser_dist_label.pack(side="right", padx=[20, 10], pady=10)
+        self.eco_laser_dist_label.pack(side="left", padx=[20, 10], pady=10)
+        self.eco_laser_dist_entry = ttk.Entry(self.eco_profiler_frame, width=8)
+        self.eco_laser_dist_entry.pack(side="left")
+
+        self.eco_threshold_label = ttk.Label(self.eco_profiler_frame, text="dy_max to measure annotations (in % of video's height):")
+        self.eco_threshold_label.pack(side="left", padx=[20, 10], pady=10)
+        self.eco_threshold_entry = ttk.Entry(self.eco_profiler_frame, width=8)
+        self.eco_threshold_entry.insert(0, '10')
+        self.eco_threshold_entry.pack(side="left")
+
+        self.eco_profiler_button = ttk.Button(self.eco_profiler_frame, text="Export", command=self.eco_profiler)
+        self.eco_profiler_button.pack(side="right", padx=20, pady=20)
 
     def biigle_to_yolo(self):
         csv_path = self.csv_entry.get()
@@ -363,28 +356,13 @@ class PostprocessPage(tk.Frame):
     def laser_mode_widgets(self, event=None):
         mode = self.mode_combobox.get()
         if mode == 'manual':
-            self.auto_mode_frame.pack_forget()
-            self.manual_mode_frame.pack(side="right")
+            self.manual_mode_frame.pack(anchor="w", padx=10)
             self.detect_button["state"] = "normal"
-        # if mode == 'automatic':
-        #     self.manual_mode_frame.pack_forget()
-        #     self.auto_mode_frame.pack(side="right")
-        #     self.detect_button["state"] = "normal"
 
     def detect_laserpoints(self):
         mode = self.mode_combobox.get()
-        preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
-        video_path = preprocessTab.video_entry.get()
-        if (not video_path):
-            video_path = filedialog.askopenfilename(parent=self, title="Choose a video file to perform laserpoints detection on", filetypes=[('all', '*'), ('avi videos', '*.avi'), ('mp4 videos', '*.mp4')])
-            if not video_path:      # if user cancelled command
-                return
-        v = pl.Path(video_path)
-        if not v.exists() or not v.is_file():
-            messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(video_path))
-            return
         if mode == "manual":
-            label = self.manual_laser_entry.get()
+            label = self.laser_label_entry.get()
             if not label:
                 messagebox.showerror("Error", "Please enter the lasers annotation label.")
                 return
@@ -394,12 +372,6 @@ class PostprocessPage(tk.Frame):
                 if not csv_path:       # user cancelled command
                     return
             self.laser_tracks = scripts.manual_detect_laserpoints(label, csv_path)
-        elif mode == "automatic":
-            device = self.device_combobox.get()
-            output_path = filedialog.askdirectory(parent=self, title="Save in")
-            result = scripts.auto_detect_laserpoints(video_path, output_path, device)
-            if result:
-                messagebox.showinfo("Success", "Laserpoints have been successfully detected and output is saved in {}".format(output_path))
         else:
             messagebox.showerror("Error", "Invalid laserpoints detection mode.")
 
@@ -411,11 +383,11 @@ class PostprocessPage(tk.Frame):
     def eco_profiler(self):
         csv_path = self.csv_entry.get()
         if not csv_path:
-            csv_path = filedialog.askopenfilename(title="Choose a CSV video annotation file", filetypes=[("csv files", "*.csv")])
+            csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
         nav_path = preprocessTab.nav_entry.get()
         if (not nav_path):
-            nav_path = filedialog.askopenfilename(parent=self, title="Choose a Pagure navigation file (used to find annotation timestamp and GPS position)", filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
+            nav_path = filedialog.askopenfilename(parent=self, title="Select a Pagure navigation file for this dataset", filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
             if not nav_path:    # user cancelled command
                 return
         n = pl.Path(nav_path)
@@ -427,35 +399,17 @@ class PostprocessPage(tk.Frame):
         if not output_path or not nav_path:
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
-        laser_label = self.manual_laser_entry.get()
-        if not laser_label:
-                window = entryWindow(self, "Laser annotation label", "Enter the label used to annotate lasers in biigle:")
-                self.wait_window(window.top)
-                laser_label = window.value
-                if not laser_label:   # if user cancelled command
-                    return
-        if not self.laser_tracks:
-            messagebox.showinfo("Info", "Laserpoints have not been detected yet, perform 'manual' detection (i.e. based on laser annotations from biigle video annotation file)")
-            self.laser_tracks = scripts.manual_detect_laserpoints(laser_label, csv_path)
-            if not self.laser_tracks:
-                messagebox.showerror("Error", "No laser tracks found, abort.)")
-                return
+        start = None
         if messagebox.askyesno(message="Was the video cut before being annotated ?"):
             start = scripts.read_time_offset_from_nav(nav_path)
             lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(start), "Do you want to use that ?"]
-            if messagebox.askquestion(title="Use cutting times ?", message="\n".join(lines)) == 'no':
+            if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
                 window = entryWindow(self, "Start cutting time", "Enter the start time used to cut video:")
                 self.wait_window(window.top)
                 start = window.value
                 if not start:   # if user cancelled command
                     return
-        laser_dist = self.eco_laser_dist_entry.get()
-        if not laser_dist:
-            window = entryWindow(self, "Distance between lasers", "Enter the distance between lasers in cm (see info file):")
-            self.wait_window(window.top)
-            laser_dist = window.value
-            if not laser_dist:   # if user cancelled command
-                return
+
         threshold = self.eco_threshold_entry.get()
         if not threshold:
             window = entryWindow(self, "dy_max value", "Please enter the threshold distance between lasers and annotation:")
@@ -463,40 +417,33 @@ class PostprocessPage(tk.Frame):
             threshold = window.value
             if not threshold:   # if user cancelled command
                 return
-        result = scripts.eco_profiler(csv_path, nav_path, threshold, self.laser_tracks, laser_label, laser_dist, start, output_path)
+
+        if not self.laser_tracks:
+            if messagebox.askyesno(title="Info", message="Laserpoints have not been detected yet, do you want to export eco profiler anyway ? (Without size measurement)"):
+                result = scripts.eco_profiler(csv_path, nav_path, threshold, str_timeoffset=start, outPath=output_path)
+            else:
+                messagebox.showerror("Error", "Export cancelled, please proceed to laser detection first.")
+                return
+        else:
+            laser_label = self.laser_label_entry.get()
+            if not laser_label:
+                window = entryWindow(self, "Laser annotation label", "Enter the label used to annotate lasers in biigle:")
+                self.wait_window(window.top)
+                laser_label = window.value
+                if not laser_label:   # if user cancelled command
+                    return
+            laser_dist = self.eco_laser_dist_entry.get()
+            if not laser_dist:
+                window = entryWindow(self, "Distance between lasers", "Enter the distance between lasers in cm (see info file):")
+                self.wait_window(window.top)
+                laser_dist = window.value
+                if not laser_dist:   # if user cancelled command
+                    return
+            result = scripts.eco_profiler(csv_path, nav_path, threshold, self.laser_tracks, laser_label, laser_dist, start, output_path)
         if result:
-            messagebox.showinfo("Success", "Ecological profiler file have been written to {}".format(output_path))
+            messagebox.showinfo("Success", "Ecological profiler file has been written to {}".format(output_path))
         else:
             messagebox.showerror("Error", "Operation failed, please retry.")
-
-class videonameWindow(object):
-    def __init__(self, master):
-        self.top = tk.Toplevel(master)
-        self.title=("Video name")
-        self.label = ttk.Label(self.top, text="Enter the video filename associated with this navigation file:")
-        self.entry = ttk.Entry(self.top)
-        self.entry.bind("<Return>", self.cleanup)
-        self.buttonQuit = ttk.Button(self.top, text="Ok", command=self.cleanup)
-        self.value = None
-        self.label.pack(padx=10, pady=[10, 2])
-        self.entry.pack(padx=10, pady=[2, 10], expand=True, fill="x")
-        self.buttonQuit.pack(pady= 10)
-
-    def cleanup(self, event=None):
-        self.value = self.entry.get()
-        self.top.destroy()
-class cutTimeWindow(object):
-    def __init__(self, master):
-        self.top = tk.Toplevel(master)
-        self.title=("Start cutting time")
-        self.label = ttk.Label(self.top, text="Enter the start time used to cut video:")
-        self.entry = ttk.Entry(self.top)
-        self.entry.bind("<Return>", self.cleanup)
-        self.buttonQuit = ttk.Button(self.top, text="Ok", command=self.cleanup)
-        self.value = None
-        self.label.pack(padx=10, pady=[10, 2])
-        self.entry.pack(padx=10, pady=[2, 10], expand=True, fill="x")
-        self.buttonQuit.pack(pady= 10)
 
 class entryWindow(object):
     def __init__(self, master, title, message):

@@ -491,7 +491,7 @@ def manual_detect_laserpoints(
         video_filename = row.video_filename
         # if we already found 2 laser tracks for this video, print error message and return
         if len(laser_tracks[video_filename]) == 2:
-            message = "Invalid number of lasers found ({}) for video filename {}. Please verify your data.".format(len(track), video_filename)
+            message = "More than 2 lasers found for video filename {}. Please verify your data.".format(video_filename)
             messagebox.showerror(title='Error', message=message)
             return
         track = {}
@@ -521,7 +521,7 @@ def eco_profiler(
         csvPath: str,
         navPath: str,
         dy_max_str: float,
-        laser_tracks: dict,
+        laser_tracks: dict = None,
         laser_label : str = None,
         laser_dist_str: str = None,
         str_timeoffset: str = None,
@@ -548,10 +548,38 @@ def eco_profiler(
     Args:
         csvPath (str): Full path to input video annotation file (must be a .csv)
         navPath (str): Full path to input navigation file (.txt or .csv)
-        timeOffset (str): time offset to start the timestamps count from nav file (str at format hh:mm:ss)
+        laser_dist_str (str): distance in cm between lasers (entered by user)
+        dy_max_str (str): threshold distance to lasers line in y: annotations below are considered too far for the measure to be accurate (in % of video height)
+        laser_tracks (dict): 2D-dict of lasers image positions mapped to keytime. Each pair of tracks are mapped to video filename
+        laser_label (str): optionnal. Label used to annotate lasers if manual annotation was used.
+        str_timeoffset (str): optionnal. Time offset to start the timestamps count from nav file (str at format hh:mm:ss)
         outPath (str): Full path to write the output file. Optionnal, by default the input file is overwritten
     """
     import math
+
+    def measure_annot_size(annot_coords, annot_shape_id):
+        # point annotation, skip size measurement
+        if annot_shape_id == 1:
+            pass
+        # for circles we take diameter (2 * third coordinate) as size
+        elif annot_shape_id == 4:
+            annot_size_px = 2*annot_coords[2]
+        # for lines we take total length (sum of segment lengths) as size
+        elif annot_shape_id == 2:
+            annot_size_px = 0
+            # zip coordinates as (x, y) pairs then re-zip as points pairs pt1=(x1, y1) and pt2=(x2, y2) to compute segment lengths
+            coords_pts = list(zip(annot_coords[::2], annot_coords[1::2]))
+            for pt1, pt2 in zip(coords_pts, coords_pts[1:]):
+                annot_size_px += math.dist(pt1, pt2)
+        # for rectangles we take diagonal as size. If it's a polygon with 4 points, assume it's close to parallelogram and take one diagonal
+        elif annot_shape_id == 5 or len(annot_coords) == 8:
+            pt1 = (annot_coords[0], annot_coords[1])
+            pt2 = (annot_coords[4], annot_coords[5])
+            annot_size_px = math.dist(pt1, pt2)
+        else:
+            messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(row.shape_name))
+            pass
+        return annot_size_px
 
     if (not pl.Path(csvPath).exists()):
         message = csvPath + "does not exist"
@@ -578,6 +606,7 @@ def eco_profiler(
         latitudes = data_nav["LAT_NAVIRE"]
         longitudes = data_nav["LONG_NAVIRE"]
 
+    laser_dist = float(laser_dist_str) if laser_dist_str else None
     if not str_timeoffset:
         time_offset = pd.to_timedelta(nav_times[0])
     else:
@@ -590,20 +619,26 @@ def eco_profiler(
     data = pd.read_csv(csvPath)
     out_data = pd.DataFrame(index=data.index,
                             columns=['video_annotation_label_id', 'video_filename', 'label_name', 'label_hierarchy',
-                                     'frame', 'timestamp', 'lasers_position_image', 'lasers_distance_image',
-                                     'annotation_position_image', 'annotation_GPS_position', 'annotation_size_pixels', 'annotation_size_cm'])
+                                     'keytime (s)', 'timestamp', 'lasers_position_image (pixels)', 'lasers_distance_image (pixels)',
+                                     'annotation_position_image (pixels)', 'annotation_GPS_position (lat, lon)', 'annotation_size_image (pixels)', 'annotation_size (cm)'])
 
     for row in data.itertuples():
         video_annotation_label_id = row.video_annotation_label_id
         video_filename = row.video_filename
         label_name = row.label_name
-        out_data.loc[row.Index, "video_annotation_label_id"] = video_annotation_label_id
-        out_data.loc[row.Index, "video_filename"] = video_filename
-        out_data.loc[row.Index, "label_name"] = label_name
-        out_data.loc[row.Index, "label_hierarchy"] = row.label_hierarchy
         shape_id = row.shape_id
-        if shape_id == 7:     # whole frame annotation
-            continue
+        # if shape_id == 7:     # whole frame annotation
+        #     continue
+        times = row.frames
+        points = row.points
+        # times and points are strings, convert them to arrays
+        times = times[1:]
+        times = times[:-1]
+        times = times.split(",")    # array of strings: ['keyframe1', 'keyframe2', ...]
+        # for points column, we need to remove two firsts and lasts character ('[[' and ']]') and split string with '],[' as delimiter to find the arrays corresponding to each time
+        points = points[2:]
+        points = points[:-2]
+        points = points.split('],[')  # result is an array of strings: ['x11, x12, ...', 'x21, x22, ...' ...]
         if laser_label and label_name.lower() == laser_label.lower():    # laser annotation
             continue
         try:
@@ -615,132 +650,131 @@ def eco_profiler(
         attrs_dict = json.loads(attrs)
         height = attrs_dict["height"]
         dy_max = float(dy_max_str) * 0.01 * height
-        # search for tracks in laser_tracks corresponding to this video
-        if not video_filename in laser_tracks:
-            message = "No laser annotation for video filename {}. Please verify your data.".format(video_filename)
-            messagebox.showerror(title="Error: ", message=message)
-            continue
-        track_l1 = laser_tracks[video_filename][0]
-        track_l2 = laser_tracks[video_filename][1]
-        if len(track_l1) == 0 or len(track_l2) == 0:
-            message = "At least one laser track is empty for video {}. Please verify your data.".format(video_filename)
-            messagebox.showerror(title="Error: ", message=message)
-            continue
+
         dist_min = None
         t_min = None
-        l1_min = None
-        l2_min = None
+        l1_min, l2_min = None, None
+        l1_pos, l2_pos = None, None
         c_min = None
         coords_min = None
-        times = row.frames
-        points = row.points
-        # times and points are strings, convert them to arrays
-        times = times[1:]
-        times = times[:-1]
-        times = times.split(",")    # array of strings: ['keyframe1', 'keyframe2', ...]
-        # for points column, we need to remove two firsts and lasts character ('[[' and ']]') and split string with '],[' as delimiter to find the arrays corresponding to each time
-        points = points[2:]
-        points = points[:-2]
-        points = points.split('],[')  # result is an array of strings: ['x11, x12, ...', 'x21, x22, ...' ...]
-        # Look in laser tracks for segment-keyframe where annotation should be interpolated with bisect-right method
-        kfs_l1 = list(track_l1.keys())
-        kfs_l2 = list(track_l2.keys())
-        for count, time in enumerate(times):
-            coords = points[count]
-            coords = coords.split(',')
-            try:
-                t = float(time)
-                # Find the two keyframe pairs tmin and tmax surrounding t in laser keyframes with bisect_right
-                pos_l1 = bisect_right(kfs_l1, t)
-                pos_l2 = bisect_right(kfs_l2, t)
-                if pos_l1 == 0 or pos_l2 == 0 or pos_l1 == len(kfs_l1) or pos_l2 == len(kfs_l2):
-                    raise ValueError("pos_l1 = {}, pos_l2 = {} and kfs_l1 = {}, kfs_l2 = {}".format(pos_l1, pos_l2, kfs_l1, kfs_l2))
-                tmin_l1, tmax_l1 = kfs_l1[pos_l1-1], kfs_l1[pos_l1]
-                tmin_l2, tmax_l2 = kfs_l2[pos_l2-1], kfs_l2[pos_l2]
-                # interpolate coordinates of lasers l1 and l2 at time t according to coordinates at tmin and tmax
-                cmin_l1, cmax_l1 = track_l1[tmin_l1], track_l1[tmax_l1]
-                coeff_l1 = (t - tmin_l1) / (tmax_l1 - tmin_l1)
-                icoords_l1 = (cmin_l1[0] + coeff_l1 * (cmax_l1[0] - cmin_l1[0]), cmin_l1[1] + coeff_l1 * (cmax_l1[1] - cmin_l1[1]))
-                cmin_l2, cmax_l2 = track_l2[tmin_l2], track_l2[tmax_l2]
-                coeff_l2 = (t - tmin_l2) / (tmax_l2 - tmin_l2)
-                icoords_l2 = (cmin_l2[0] + coeff_l2 * (cmax_l2[0] - cmin_l2[0]), cmin_l2[1] + coeff_l2 * (cmax_l2[1] - cmin_l2[1]))
-                # compute the equation of the line passing through both interpolated coords
-                if icoords_l2[0] - icoords_l1[0] == 0:
-                    print("Error: 2 laser coords mixed, this souldn't happen.")
-                    continue
-                a = (icoords_l2[1] - icoords_l1[1]) / (icoords_l2[0] - icoords_l1[0])
-                b = icoords_l1[1] - a * icoords_l1[0]
-                # convert string coords list to float and compute barycenter of the polygon annotation (except for points and circles)
-                coords = [float(coord) for coord in coords]
+        laser_dist_px = None
+        annot_size_px = None
+        annot_size = None
+        if not laser_tracks or len(times) == 1:
+            # if no laser tracks, take the last keytime of annotation to get timestamp and GPS position, as we assume it is the closest position to camera, where measures are made
+            t_min = float(times[-1])
+            if shape_id != 7:     # not whole frame annotation
+                coords = points[-1]
+                coords = coords.split(',')
+                coords = [float(c) for c in coords]
                 n = float(len(coords)/2)
                 # except for points or circles, compute the barycenter of the annotation
                 if shape_id != 1 and shape_id != 4:
-                    barycenter = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
+                    c_min = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
                 else:
-                    barycenter = (coords[0], coords[1])
-                #  compute distance to laser line
-                dist = abs(barycenter[1] - a * barycenter[0] - b) / math.sqrt(1 + math.pow(a,2))
-                if dist_min == None or dist < dist_min:
-                    dist_min = dist
-                    t_min = t
-                    c_min = barycenter
-                    l1_min, l2_min = icoords_l1, icoords_l2
-                    coords_min = coords
-            except:     # time == null means there is a gap in annotation, skip and continue on next keyframe
-                print("couldn't find interpolation segment keyframes at {} for video {}, annotation {}".format(t, video_filename, video_annotation_label_id))
+                    c_min = (coords[0], coords[1])
+        else:
+            # search for tracks in laser_tracks corresponding to this video
+            if not video_filename in laser_tracks:
+                message = "No laser annotation for video filename {}. Please verify your data.".format(video_filename)
+                messagebox.showerror(title="Error: ", message=message)
                 continue
-        if dist_min == None or t_min == None or l1_min == None or l2_min == None or c_min == None:
-            print("Error, couldn't compute one of the output value for annotation {} in video {}".format(video_annotation_label_id, video_filename))
-            continue
-        if (dist_min > dy_max):
-            message = "Found a minimum distance to lasers : {} pixels for annotation n°{} with label {}. It is more than {}% of the video height ({} pixels) which is set as the maximum distance to measure objects." \
-                    " Skip this annotation.".format(round(dist_min), video_annotation_label_id, label_name, dy_max_str, dy_max)
-            print(message)
-            # messagebox.showinfo(title="Info", message=message)
-            continue
-        timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t, time_offset)
-        if shape_id != 1:
-            # for circles we take diameter (2 * third coordinate) as size
-            if shape_id == 4:
-                annot_size_px = 2*coords_min[2]
-            # for lines we take total length (sum of segment lengths) as size
-            elif shape_id == 2:
-                annot_size_px = 0
-                # zip coordinates as (x, y) pairs then re-zip as points pairs pt1=(x1, y1) and pt2=(x2, y2) to compute segment lengths
-                coords_pts = list(zip(coords_min[::2], coords_min[1::2]))
-                for pt1, pt2 in zip(coords_pts, coords_pts[1:]):
-                    annot_size_px += math.dist(pt1, pt2)
-            # for rectangles we take diagonal as size. If it's a polygon with 4 points, assume it's close to parallelogram and take one diagonal
-            elif shape_id == 5 or len(coords_min) == 8:
-                pt1 = (coords_min[0], coords_min[1])
-                pt2 = (coords_min[4], coords_min[5])
-                annot_size_px = math.dist(pt1, pt2)
-            else:
-                messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(row.shape_name))
+            track_l1 = laser_tracks[video_filename][0]
+            track_l2 = laser_tracks[video_filename][1]
+            if len(track_l1) == 0 or len(track_l2) == 0:
+                message = "At least one laser track is empty for video {}. Please verify your data.".format(video_filename)
+                messagebox.showerror(title="Error: ", message=message)
                 continue
-        laser_dist_px = math.dist(l1_min, l2_min)
-        if laser_dist_str and annot_size_px:
-            laser_dist = float(laser_dist_str)
-            annot_size = annot_size_px * laser_dist/laser_dist_px
-        l1_pos = (round(l1_min[0], 2), round(l1_min[1], 2))
-        l2_pos = (round(l2_min[0], 2), round(l2_min[1], 2))
-        out_data.loc[row.Index, "frame"] = round(t_min, 2)
-        out_data.loc[row.Index, "timestamp"] = timestamp
-        out_data.loc[row.Index, "lasers_position_image"] = l1_pos, l2_pos
-        out_data.loc[row.Index, "lasers_distance_image"] = round(laser_dist_px, 2)
-        out_data.loc[row.Index, "annotation_position_image"] = (round(c_min[0], 2), round(c_min[1], 2))
-        out_data.loc[row.Index, "annotation_GPS_position"] = latitude, longitude
-        out_data.loc[row.Index, "annotation_size_pixels"] = annot_size_px
-        out_data.loc[row.Index, "annotation_size_cm"] = annot_size
+
+            # Look in laser tracks for segment-keyframe where annotation should be interpolated with bisect-right method
+            kfs_l1 = list(track_l1.keys())
+            kfs_l2 = list(track_l2.keys())
+            for count, time in enumerate(times):
+                coords = points[count]
+                coords = coords.split(',')
+                # fill a dictionnary with times as keys and annotation ids as values. We use try statement for time float conversion to handle gap case (null value)
+                if time == "null":
+                    # time == null means there is a gap in annotation, skip and continue on next keyframe
+                    continue
+                try:
+                    t = float(time)
+                    # if annotation keytime is out of lasers bounds, take extreme values
+                    if t < kfs_l1[0] or t < kfs_l2[0]:
+                        icoords_l1 = track_l1[kfs_l1[0]]
+                        icoords_l2 = track_l2[kfs_l2[0]]
+                    elif t >= kfs_l1[-1] or t >= kfs_l2[-1]:
+                        icoords_l1 = track_l1[kfs_l1[-1]]
+                        icoords_l2 = track_l2[kfs_l2[-1]]
+                    else:
+                        # Find the two keyframe pairs tmin and tmax surrounding t in laser keyframes with bisect_right
+                        pos_l1 = min(bisect_right(kfs_l1, t), len(kfs_l1)-1)
+                        pos_l2 = min(bisect_right(kfs_l2, t), len(kfs_l2)-1)
+                        tmin_l1, tmax_l1 = kfs_l1[pos_l1-1], kfs_l1[pos_l1]
+                        tmin_l2, tmax_l2 = kfs_l2[pos_l2-1], kfs_l2[pos_l2]
+                        # interpolate coordinates of lasers l1 and l2 at time t according to coordinates at tmin and tmax
+                        cmin_l1, cmax_l1 = track_l1[tmin_l1], track_l1[tmax_l1]
+                        coeff_l1 = (t - tmin_l1) / (tmax_l1 - tmin_l1)
+                        icoords_l1 = (cmin_l1[0] + coeff_l1 * (cmax_l1[0] - cmin_l1[0]), cmin_l1[1] + coeff_l1 * (cmax_l1[1] - cmin_l1[1]))
+                        cmin_l2, cmax_l2 = track_l2[tmin_l2], track_l2[tmax_l2]
+                        coeff_l2 = (t - tmin_l2) / (tmax_l2 - tmin_l2)
+                        icoords_l2 = (cmin_l2[0] + coeff_l2 * (cmax_l2[0] - cmin_l2[0]), cmin_l2[1] + coeff_l2 * (cmax_l2[1] - cmin_l2[1]))
+                    # compute the equation of the line passing through both interpolated coords
+                    if icoords_l2[0] - icoords_l1[0] == 0:
+                        print("Error: 2 laser coords mixed, this souldn't happen.")
+                        continue
+                    a = (icoords_l2[1] - icoords_l1[1]) / (icoords_l2[0] - icoords_l1[0])
+                    b = icoords_l1[1] - a * icoords_l1[0]
+                    # convert string coords list to float and compute barycenter of the polygon annotation (except for points and circles)
+                    coords = [float(coord) for coord in coords]
+                    n = float(len(coords)/2)
+                    # except for points or circles, compute the barycenter of the annotation
+                    if shape_id != 1 and shape_id != 4:
+                        barycenter = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
+                    else:
+                        barycenter = (coords[0], coords[1])
+                    #  compute distance to laser line
+                    dist = abs(barycenter[1] - a * barycenter[0] - b) / math.sqrt(1 + math.pow(a,2))
+                    if dist_min == None or dist < dist_min:
+                        dist_min = dist
+                        t_min = t
+                        c_min = barycenter
+                        l1_min, l2_min = icoords_l1, icoords_l2
+                        coords_min = coords
+                except:
+                    print("Error: couldn't find interpolation segment at {} for video {}, annotation {}: ".format(t, video_filename, video_annotation_label_id))
+                    continue
+            if l1_min and l2_min:
+                laser_dist_px = math.dist(l1_min, l2_min)
+                l1_pos = (round(l1_min[0], 2), round(l1_min[1], 2))
+                l2_pos = (round(l2_min[0], 2), round(l2_min[1], 2))
+            # below dy_max annotation is considered too far from lasers: do not compute size measurement
+            if dist_min and (dist_min < dy_max):
+                annot_size_px = measure_annot_size(coords_min, shape_id)
+                if laser_dist and laser_dist_px and annot_size_px:
+                    annot_size = annot_size_px * laser_dist/laser_dist_px
+
+        out_data.at[row.Index, "video_annotation_label_id"] = video_annotation_label_id
+        out_data.at[row.Index, "video_filename"] = video_filename
+        out_data.at[row.Index, "label_name"] = label_name
+        if row.label_hierarchy:
+            out_data.at[row.Index, "label_hierarchy"] = row.label_hierarchy
+        if t_min:
+            out_data.at[row.Index, "keytime (s)"] = round(t_min, 2)
+            try:
+                timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, time_offset)
+                out_data.at[row.Index, "timestamp"] = timestamp
+                out_data.at[row.Index, "annotation_GPS_position (lat, lon)"] = latitude, longitude
+            except ValueError as e:
+                print("Error: failed to interpolate nav data at {}, skip.".format(t_min))
+        if l1_pos and l2_pos:
+            out_data.at[row.Index, "lasers_position_image (pixels)"] = l1_pos, l2_pos
+        if laser_dist_px:
+            out_data.at[row.Index, "lasers_distance_image (pixels)"] = round(laser_dist_px, 2)
+        if c_min:
+            out_data.at[row.Index, "annotation_position_image (pixels)"] = (round(c_min[0], 2), round(c_min[1], 2))
+        if annot_size_px:
+            out_data.at[row.Index, "annotation_size_image (pixels)"] = annot_size_px
+        if annot_size:
+            out_data.at[row.Index, "annotation_size (cm)"] = annot_size
     out_data.to_csv(outFilepath, index=False)
     return True
-
-
-def auto_detect_laserpoints(input, output, device):
-    from components import detect_laserpoints
-    try:
-        detect_laserpoints.main([input, 'LP_detection\epoch_7.pth', 'LP_detection\ddod_r50.py', output, 'result.mp4', 'coco.json', '512', '0.5', '0.5', 'mmdet', device, 'True', '4', 'False'])
-        return True
-    except:
-        print("error")
-        return False
