@@ -327,7 +327,6 @@ def biigle_annot_to_yolo(
         '''
         import cv2
 
-        frame_count = 0
         videoIn = cv2.VideoCapture(str(path))
         video_width = videoIn.get(cv2.CAP_PROP_FRAME_WIDTH)
         video_height = videoIn.get(cv2.CAP_PROP_FRAME_HEIGHT)
@@ -341,7 +340,7 @@ def biigle_annot_to_yolo(
                 ret, frame = videoIn.read()
                 if ret:
                     # open yolo file to get bboxes coordinates
-                    with open(pl.Path(out_annotations_path).joinpath(videoname + "_%04d"%frame_count + '.txt'), 'r') as file:
+                    with open(pl.Path(out_annotations_path).joinpath(videoname + "_" + str(kf) + '.txt'), 'r') as file:
                         next(file)  # skip headers
                         for l in file:
                             data = l.split(",")
@@ -358,8 +357,7 @@ def biigle_annot_to_yolo(
                             xmax = int(x_center_pixel + dw)
                             ymax = int(y_center_pixel + dh)
                             cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), (0, 0, 255), 2)
-                            cv2.imwrite(str(pl.Path(out_images_path).joinpath(path.stem + "_%04d"%frame_count + ".png")), frame)
-                frame_count += 1
+                            cv2.imwrite(str(pl.Path(out_images_path).joinpath(path.stem + "_" + str(kf) + ".png")), frame)
         except Exception as error:
             messagebox.showerror("Error", "error processing video {}".format(videoname))
             return False
@@ -380,8 +378,6 @@ def biigle_annot_to_yolo(
 
     # For each video input file
     for videoname in annotation_ids.keys():
-        # Keep a counter of keyframes processed to construct output filenames
-        kf_count = 0
         # Keep track of annotations being processed in a set of their ids, to interpolate positions in-between key frames
         memdata = set()
         # Sort annotation_ids by keys (i.e. keyframes).
@@ -390,11 +386,10 @@ def biigle_annot_to_yolo(
         # Browse all keyframes in ascending order
         for k, ids in sorted_ids:
             outdata, memdata = process_keyframe(k, ids, annotation_tracks, memdata)
-            outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_%04d"%kf_count + '.txt')
+            outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_" + str(k) + '.txt')
             if outdata.empty:
                 print("error: data for timekey {} of file {} is empty".format(k, outFilepath))
                 continue
-            kf_count += 1
             outdata.to_csv(outFilepath, index=False)
 
         if videoPaths:
