@@ -259,6 +259,15 @@ class PreprocessPage(tk.Frame):
                 return
         else:
             video_name = pl.Path(self.video_path).name
+        s = pl.Path(video_name).suffix
+        if s and s != ".mp4":
+            if not messagebox.askyesno("Warning", "Video extension is {}, is it the same as for uploaded file on Biigle (note that cut movies are converted to .mp4)?".format(s)):
+                w = entryWindow(self, "Video extension", "Enter the video extension of the uploaded file on Biigle:")
+                self.wait_window(w.top)
+                s = w.value
+                if not s:
+                    return
+            video_name = pl.Path(video_name).with_suffix(s)
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(self.nav_path).parent, filetypes=[('csv files', '*.csv'), ('all files', '*')], defaultextension='.csv')
         if not output_path:
             return
