@@ -215,23 +215,23 @@ class PreprocessPage(tk.Frame):
                 messagebox.showerror(title="Error: ", message="If no navigation file is provided, you need to specify 'From' and 'To' times (with format HH:MM:SS or in seconds) to cut video file.")
                 return
             else:
-                start = str(self.cut_from_entry.get())
+                start_value = str(self.cut_from_entry.get())
                 end = str(self.cut_to_entry.get())
-                if not scripts.test_time_format(start) or not scripts.test_time_format(end):
-                    messagebox.showerror(title="Error: ", message="Wrong format for start/end values. Please use seconds or HH:MM:SS.")
+                if not scripts.test_time_format(start_value) or not scripts.test_time_format(end):
+                    messagebox.showerror(title="Error: ", message="Wrong format for start_value/end values. Please use seconds or HH:MM:SS.")
                     return
         else:
-            start, end = scripts.read_cut_times_from_nav(self.nav_path)
-            lines = ["The program found the following cutting times in navigation file:", "{} and {}".format(start, end), "Do you want to proceed ?"]
+            start_value, end = scripts.read_cut_times_from_nav(self.nav_path)
+            lines = ["The program found the following cutting times in navigation file:", "{} and {}".format(start_value, end), "Do you want to proceed ?"]
             if not (messagebox.askokcancel(title="Confirm cut times", message="\n".join(lines))):
                 return
             self.cut_from_entry.delete(0, "end")
-            self.cut_from_entry.insert(0, start)
+            self.cut_from_entry.insert(0, start_value)
             self.cut_to_entry.delete(0, "end")
             self.cut_to_entry.insert(0, end)
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", filetypes=[('mp4 videos', '*.mp4'), ('avi videos', '*.avi'), ('mpeg videos', '*.mpeg'),
                                                     ('quicktime videos', '*.mov'), ('all files', '*')], defaultextension='.mp4')
-        result = scripts.cut_command(self.video_path, start, end, output_path)
+        result = scripts.cut_command(self.video_path, start_value, end, output_path)
         if result == 0:
             messagebox.showinfo("Success", "Video {} has been successfully cut and has been saved to {}".format(p.name, output_path))
         else:
@@ -315,7 +315,7 @@ class PostprocessPage(tk.Frame):
         self.mode_frame.pack(anchor="w", padx=10, pady=10)
         self.mode_label = ttk.Label(self.mode_frame, text="Detection mode:")
         self.mode_label.pack(side="left", padx=10)
-        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual"], state='readonly', width=10)
+        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual", ""], state='readonly', width=10)
         self.mode_combobox.pack(side="left")
         self.mode_combobox.bind("<<ComboboxSelected>>", self.laser_mode_widgets)
 
@@ -334,16 +334,38 @@ class PostprocessPage(tk.Frame):
         self.eco_profiler_label = ttk.Label(self.eco_profiler_frame, text="Build ecological profiler export")
         self.eco_profiler_label.pack(pady=10)
 
-        self.eco_laser_dist_label = ttk.Label(self.eco_profiler_frame, text="Distance between lasers in cm:")
-        self.eco_laser_dist_label.pack(side="left", padx=[20, 10], pady=10)
-        self.eco_laser_dist_entry = ttk.Entry(self.eco_profiler_frame, width=8)
-        self.eco_laser_dist_entry.pack(side="left")
+        self.entries_frame = ttk.Frame(self.eco_profiler_frame)
+        self.entries_frame.pack(anchor="w", padx=10, pady=10, fill="x")
+        self.eco_laser_dist_label = ttk.Label(self.entries_frame, text="Distance between lasers in cm:")
+        self.eco_laser_dist_label.pack(side="left", padx=10)
+        self.eco_laser_dist_entry = ttk.Entry(self.entries_frame, width=10)
+        self.eco_laser_dist_entry.pack(side="left", padx=[0, 10])
 
-        self.eco_threshold_label = ttk.Label(self.eco_profiler_frame, text="dy_max to measure annotations (in % of video's height):")
-        self.eco_threshold_label.pack(side="left", padx=[20, 10], pady=10)
-        self.eco_threshold_entry = ttk.Entry(self.eco_profiler_frame, width=8)
+        self.eco_threshold_label = ttk.Label(self.entries_frame, text="dy_max to measure annotations:\n(in % of video's height)")
+        self.eco_threshold_label.pack(side="left", padx=15)
+        self.eco_threshold_entry = ttk.Entry(self.entries_frame, width=10)
         self.eco_threshold_entry.insert(0, '10')
         self.eco_threshold_entry.pack(side="left")
+
+        self.annot_mode_frame = ttk.Frame(self.eco_profiler_frame)
+        self.annot_mode_frame.pack(anchor="w", padx=10, fill="x")
+        self.annot_mode_label = ttk.Label(self.annot_mode_frame, text="Mode used to annotate video:")
+        self.annot_mode_label.pack(side="left", padx=10)
+        self.annot_mode_combobox = ttk.Combobox(self.annot_mode_frame, values=["full", "sampled"], state='readonly', width=10)
+        self.annot_mode_combobox.pack(side="left")
+        self.annot_mode_combobox.bind("<<ComboboxSelected>>", self.annot_mode_widgets)
+
+        self.sampled_mode_frame = ttk.Frame(self.annot_mode_frame)
+        self.sampled_markers_label = ttk.Label(self.sampled_mode_frame ,text="Labels used to delimit annotation sections:")
+        self.sampled_markers_label.pack(anchor="w", padx=10, pady=5)
+        self.start_marker_label = ttk.Label(self.sampled_mode_frame, text="Start_value:")
+        self.start_marker_label.pack(side="left", padx=10)
+        self.start_marker_entry = ttk.Entry(self.sampled_mode_frame, width=12)
+        self.start_marker_entry.pack(side="left")
+        self.stop_marker_label = ttk.Label(self.sampled_mode_frame, text="Stop:")
+        self.stop_marker_label.pack(side="left", padx=10)
+        self.stop_marker_entry = ttk.Entry(self.sampled_mode_frame, width=12)
+        self.stop_marker_entry.pack(side="left")
 
         self.eco_profiler_button = ttk.Button(self.eco_profiler_frame, text="Export", command=self.eco_profiler)
         self.eco_profiler_button.pack(side="right", padx=20, pady=20)
@@ -367,6 +389,15 @@ class PostprocessPage(tk.Frame):
         if mode == 'manual':
             self.manual_mode_frame.pack(anchor="w", padx=10)
             self.detect_button["state"] = "normal"
+        elif mode == "":
+            self.manual_mode_frame.pack_forget()
+
+    def annot_mode_widgets(self, event=None):
+        mode = self.annot_mode_combobox.get()
+        if mode == "full":
+            self.sampled_mode_frame.pack_forget()
+        elif mode == "sampled":
+            self.sampled_mode_frame.pack(side="left", padx=10)
 
     def detect_laserpoints(self):
         mode = self.mode_combobox.get()
@@ -380,7 +411,8 @@ class PostprocessPage(tk.Frame):
                 csv_path = filedialog.askopenfilename(title="Select biigle annotation file with laserpoints annotations", filetypes=[('csv files', '*.csv')])
                 if not csv_path:       # user cancelled command
                     return
-            self.laser_tracks = scripts.manual_detect_laserpoints(label, csv_path)
+            annot_mode = self.annot_mode_combobox.get()
+            self.laser_tracks = scripts.manual_detect_laserpoints(label, csv_path, annot_mode)
         else:
             messagebox.showerror("Error", "Invalid laserpoints detection mode.")
 
@@ -395,29 +427,22 @@ class PostprocessPage(tk.Frame):
             csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
         nav_path = preprocessTab.nav_entry.get()
-        if (not nav_path):
-            nav_path = filedialog.askopenfilename(parent=self, title="Select a Pagure navigation file for this dataset", filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
-            if not nav_path:    # user cancelled command
-                return
-        n = pl.Path(nav_path)
-        if not n.exists() or not n.is_file():
-            messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(nav_path))
-            return
 
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(csv_path).parent, filetypes=[("csv files", "*.csv"), ('text files', '*.txt')])
-        if not output_path or not nav_path:
+        if not output_path: # or not nav_paths:
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
-        start = None
-        if messagebox.askyesno(message="Was the video cut before being annotated ?"):
-            start = scripts.read_time_offset_from_nav(nav_path)
-            lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(start), "Do you want to use that ?"]
-            if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
-                window = entryWindow(self, "Start cutting time", "Enter the start time used to cut video:")
-                self.wait_window(window.top)
-                start = window.value
-                if not start:   # if user cancelled command
-                    return
+        start_value = None
+        if nav_path:
+            if messagebox.askyesno(message="Was the video for nav_path {} cut before being annotated ?".format(pl.Path(nav_path).name)):
+                start_value = scripts.read_time_offset_from_nav(nav_path)
+                lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(start_value), "Do you want to use that ?"]
+                if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
+                    window = entryWindow(self, "Start_value cutting time", "Enter the start_value time used to cut video:")
+                    self.wait_window(window.top)
+                    start_value = window.value
+                    if not start_value:   # if user cancelled command
+                        return
 
         threshold = self.eco_threshold_entry.get()
         if not threshold:
@@ -427,9 +452,17 @@ class PostprocessPage(tk.Frame):
             if not threshold:   # if user cancelled command
                 return
 
+        start_sample, stop_sample = None, None
+        annot_mode = self.annot_mode_combobox.get()
+        if annot_mode == "sampled":
+            start_sample = self.start_marker_entry.get()
+            stop_sample = self.stop_marker_entry.get()
+            if not start_sample or not stop_sample:
+                messagebox.showerror("Error", "Please provide start and stop markers used in annotation sampling protocol.")
+                return
         if not self.laser_tracks:
             if messagebox.askyesno(title="Info", message="Laserpoints have not been detected yet, do you want to export eco profiler anyway ? (Without size measurement)"):
-                result = scripts.eco_profiler(csv_path, nav_path, threshold, str_timeoffset=start, outPath=output_path)
+                result = scripts.eco_profiler(csv_path, threshold, nav_path, str_timeoffset=start_value, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
             else:
                 messagebox.showerror("Error", "Export cancelled, please proceed to laser detection first.")
                 return
@@ -448,7 +481,7 @@ class PostprocessPage(tk.Frame):
                 laser_dist = window.value
                 if not laser_dist:   # if user cancelled command
                     return
-            result = scripts.eco_profiler(csv_path, nav_path, threshold, self.laser_tracks, laser_label, laser_dist, start, output_path)
+            result = scripts.eco_profiler(csv_path, threshold, nav_path, self.laser_tracks, laser_label, laser_dist, start_value, start_sample, stop_sample, output_path)
         if result:
             messagebox.showinfo("Success", "Ecological profiler file has been written to {}".format(output_path))
         else:
