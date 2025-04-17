@@ -440,18 +440,18 @@ def interpolate_nav_data(
         time = timeoffset + timedelta(seconds=keytime)
 
     # Find rightmost value less than or equal to time in nav_times
-    i = bisect_right(nav_times, time)
+    i = min(max(bisect_right(nav_times, time), 1), len(nav_times)-1)
     if not i:
         raise ValueError
     # get time values wrapping time to compute interpolation coeff and latitude/longitude corresponding to these times
-    if (i==0):
-        t1, t2 = nav_times[0], nav_times[1]
-        lat1, lat2 = latitudes[0], latitudes[1]
-        lon1, lon2 = longitudes[0], longitudes[1]
-    else:
-        t1, t2 = nav_times[i-1], nav_times[i]
-        lat1, lat2 = latitudes[i-1], latitudes[i]
-        lon1, lon2 = longitudes[i-1], longitudes[i]
+    # if (i==0):
+    #     t1, t2 = nav_times[0], nav_times[1]
+    #     lat1, lat2 = latitudes[0], latitudes[1]
+    #     lon1, lon2 = longitudes[0], longitudes[1]
+    # else:
+    t1, t2 = nav_times[i-1], nav_times[i]
+    lat1, lat2 = latitudes[i-1], latitudes[i]
+    lon1, lon2 = longitudes[i-1], longitudes[i]
     coeff = (time - t1) / (t2 - t1)
     time_delta = t1 + coeff * (t2 - t1)
     time_delta = nav_days[i] + time_delta
@@ -518,11 +518,11 @@ def manual_detect_laserpoints(
 def eco_profiler(
         csvPath: str,
         dy_max_str: float,
+        callback,
         navPath: str = None,
         laser_tracks: dict = None,
         laser_label : str = None,
         laser_dist_str: str = None,
-        str_timeoffset: str = None,
         start_label: str = None,
         stop_label: str = None,
         outPath: str = None):
@@ -671,20 +671,26 @@ def eco_profiler(
             latitudes = data_nav["LAT_NAVIRE"]
             longitudes = data_nav["LONG_NAVIRE"]
 
-        if not str_timeoffset:
-            if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
-                str_timeoffset = read_time_offset_from_nav(nav_path)
-                lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(str_timeoffset), "Do you want to use that ?"]
-                if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
-                    continue    # skip to next video file
-        if str_timeoffset:
-            try:
-                time_offset = pd.to_timedelta(str_timeoffset)
-            except ValueError as e:
-                print("error: failed to convert string time {} to timedelta".format(str_timeoffset), e)
-                time_offset = pd.to_timedelta(nav_times[0])
-        else:
-            time_offset = pd.to_timedelta(nav_times[0])
+        time_offset = pd.to_timedelta(nav_times[0])
+        start_value = None
+        if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+            start_value = read_time_offset_from_nav(nav_path)
+            offset = datetime.strftime(pd.to_datetime(start_value) - time_offset, "%H:%M:%S")
+            lines = ["The program found the following 'start cut time' offset in navigation file:", "{} (relative time) corresponding to {} absolute timestamp".format(offset, start_value), "Do you want to use that ?"]
+            if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
+                if callback:
+                    str_offset = callback()
+                    try:
+                        start_value = time_offset + pd.to_timedelta(str_offset)
+                    except ValueError as e:
+                        print("error: failed to convert string time {} to timedelta".format(str_offset), e)
+            else:
+                try:
+                    start_value = pd.to_timedelta(start_value)
+                except ValueError as e:
+                    print("error: failed to convert string time {} to timedelta".format(start_value), e)
+        if not start_value:
+            start_value = pd.to_timedelta(nav_times[0])
 
         for row in data_video.itertuples():
             video_annotation_label_id = row.video_annotation_label_id
@@ -835,7 +841,7 @@ def eco_profiler(
             if t_min != None:
                 out_data.at[row.Index, "keytime (s)"] = round(t_min, 2)
                 try:
-                    timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, time_offset)
+                    timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, start_value)
                     out_data.at[row.Index, "timestamp"] = timestamp
                     out_data.at[row.Index, "annotation_GPS_position (lat, lon)"] = latitude, longitude
                 except ValueError as e:

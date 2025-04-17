@@ -352,13 +352,14 @@ class PostprocessPage(tk.Frame):
         self.annot_mode_label = ttk.Label(self.annot_mode_frame, text="Mode used to annotate video:")
         self.annot_mode_label.pack(side="left", padx=10)
         self.annot_mode_combobox = ttk.Combobox(self.annot_mode_frame, values=["full", "sampled"], state='readonly', width=10)
+        self.annot_mode_combobox.current(0)
         self.annot_mode_combobox.pack(side="left")
         self.annot_mode_combobox.bind("<<ComboboxSelected>>", self.annot_mode_widgets)
 
         self.sampled_mode_frame = ttk.Frame(self.annot_mode_frame)
         self.sampled_markers_label = ttk.Label(self.sampled_mode_frame ,text="Labels used to delimit annotation sections:")
         self.sampled_markers_label.pack(anchor="w", padx=10, pady=5)
-        self.start_marker_label = ttk.Label(self.sampled_mode_frame, text="Start_value:")
+        self.start_marker_label = ttk.Label(self.sampled_mode_frame, text="Start:")
         self.start_marker_label.pack(side="left", padx=10)
         self.start_marker_entry = ttk.Entry(self.sampled_mode_frame, width=12)
         self.start_marker_entry.pack(side="left")
@@ -422,6 +423,11 @@ class PostprocessPage(tk.Frame):
             messagebox.showerror("Error", "Operation failed, please retry.")
 
     def eco_profiler(self):
+        def time_offset_cb():
+            window = entryWindow(self, "Time offset value", "Enter the 'start cut time' used to cut video (relative):")
+            self.wait_window(window.top)
+            return window.value
+
         csv_path = self.csv_entry.get()
         if not csv_path:
             csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
@@ -432,17 +438,6 @@ class PostprocessPage(tk.Frame):
         if not output_path: # or not nav_paths:
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
-        start_value = None
-        if nav_path:
-            if messagebox.askyesno(message="Was the video for nav_path {} cut before being annotated ?".format(pl.Path(nav_path).name)):
-                start_value = scripts.read_time_offset_from_nav(nav_path)
-                lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(start_value), "Do you want to use that ?"]
-                if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
-                    window = entryWindow(self, "Start_value cutting time", "Enter the start_value time used to cut video:")
-                    self.wait_window(window.top)
-                    start_value = window.value
-                    if not start_value:   # if user cancelled command
-                        return
 
         threshold = self.eco_threshold_entry.get()
         if not threshold:
@@ -462,7 +457,7 @@ class PostprocessPage(tk.Frame):
                 return
         if not self.laser_tracks:
             if messagebox.askyesno(title="Info", message="Laserpoints have not been detected yet, do you want to export eco profiler anyway ? (Without size measurement)"):
-                result = scripts.eco_profiler(csv_path, threshold, nav_path, str_timeoffset=start_value, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
+                result = scripts.eco_profiler(csv_path, threshold, time_offset_cb, nav_path, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
             else:
                 messagebox.showerror("Error", "Export cancelled, please proceed to laser detection first.")
                 return
@@ -481,7 +476,7 @@ class PostprocessPage(tk.Frame):
                 laser_dist = window.value
                 if not laser_dist:   # if user cancelled command
                     return
-            result = scripts.eco_profiler(csv_path, threshold, nav_path, self.laser_tracks, laser_label, laser_dist, start_value, start_sample, stop_sample, output_path)
+            result = scripts.eco_profiler(csv_path, threshold, time_offset_cb, nav_path, self.laser_tracks, laser_label, laser_dist, start_sample, stop_sample, output_path, time_offset_cb)
         if result:
             messagebox.showinfo("Success", "Ecological profiler file has been written to {}".format(output_path))
         else:
