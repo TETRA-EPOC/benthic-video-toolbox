@@ -212,26 +212,36 @@ class PreprocessPage(tk.Frame):
             messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(self.video_path))
         if (not self.nav_path or len(self.nav_path) == 0):
             if (str(self.cut_to_entry.cget("foreground")) or str(self.cut_from_entry.cget("foreground"))) == "#A9A9A9" or not self.cut_from_entry.get() or not self.cut_to_entry.get():
-                messagebox.showerror(title="Error: ", message="If no navigation file is provided, you need to specify 'From' and 'To' times (with format HH:MM:SS or in seconds) to cut video file.")
+                messagebox.showerror(title="Error: ", message="If no navigation file is provided, you need to specify start and end cut times (in seconds or with format HH:MM:SS) to cut video file.")
                 return
             else:
-                start_value = str(self.cut_from_entry.get())
+                start = str(self.cut_from_entry.get())
                 end = str(self.cut_to_entry.get())
-                if not scripts.test_time_format(start_value) or not scripts.test_time_format(end):
+                if not scripts.test_time_format(start) or not scripts.test_time_format(end):
                     messagebox.showerror(title="Error: ", message="Wrong format for start_value/end values. Please use seconds or HH:MM:SS.")
                     return
         else:
-            start_value, end = scripts.read_cut_times_from_nav(self.nav_path)
-            lines = ["The program found the following cutting times in navigation file:", "{} and {}".format(start_value, end), "Do you want to proceed ?"]
-            if not (messagebox.askokcancel(title="Confirm cut times", message="\n".join(lines))):
+            try:
+                start, end, t_start, t_end = scripts.read_cut_times_from_nav(self.nav_path)
+            except:
                 return
+            lines = ["The program found the following cut times (relative) in navigation file:", "{} and {} corresponding to absolute timestamps {} and {}".format(start, end, t_start, t_end), "Do you want to proceed ?"]
+            if not (messagebox.askyesno(title="Confirm cut times", message="\n".join(lines))):
+                window = entryWindow(self, "Time cut start", "Enter the 'start cut time' (relative) in seconds or with format HH:MM:SS:")
+                self.wait_window(window.top)
+                start = window.value
+                window = entryWindow(self, "Time cut end", "Enter the 'end cut time' (relative) in seconds or with format HH:MM:SS:")
+                self.wait_window(window.top)
+                end = window.value
+                if not start or not end:
+                    return
             self.cut_from_entry.delete(0, "end")
-            self.cut_from_entry.insert(0, start_value)
+            self.cut_from_entry.insert(0, start)
             self.cut_to_entry.delete(0, "end")
             self.cut_to_entry.insert(0, end)
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", filetypes=[('mp4 videos', '*.mp4'), ('avi videos', '*.avi'), ('mpeg videos', '*.mpeg'),
                                                     ('quicktime videos', '*.mov'), ('all files', '*')], defaultextension='.mp4')
-        result = scripts.cut_command(self.video_path, start_value, end, output_path)
+        result = scripts.cut_command(self.video_path, start, end, output_path)
         if result == 0:
             messagebox.showinfo("Success", "Video {} has been successfully cut and has been saved to {}".format(p.name, output_path))
         else:

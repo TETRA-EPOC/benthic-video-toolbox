@@ -7,6 +7,7 @@ import subprocess as sp
 from collections import defaultdict
 from tkinter import messagebox
 from tkinter import filedialog
+import numpy as np
 
 def test_time_format(time: str):
     if time.isnumeric():
@@ -30,7 +31,11 @@ def read_cut_times_from_nav(navPath: str):
         message = navPath + " is not a regular file. Please provide a valid file path."
         messagebox.showerror("Error", message)
         raise FileExistsError(message)
-    df = pd.read_table(navPath, usecols=["HEURE", "CODEseq"])
+    try:
+        df = pd.read_table(navPath, usecols=["HEURE", "CODEseq"])
+    except ValueError as e:
+        messagebox.showerror("Error", "Failed to read cut times from nav file: {}".format(e))
+        return
     idx0 = df.index[df["CODEseq"] == "DEBPLO"]
     t0_string = df.at[idx0[0], "HEURE"]
     t0 = datetime.strptime(t0_string, "%H:%M:%S")
@@ -42,7 +47,7 @@ def read_cut_times_from_nav(navPath: str):
     t2 = datetime.strptime(t2_string, "%H:%M:%S")
     start = t1 - t0
     end = t2 - t0
-    return [start, end]
+    return [start, end, t1_string, t2_string]
 
 def read_time_offset_from_nav(navPath: str):
     p = pl.Path(navPath)
@@ -125,9 +130,35 @@ def convert_nav_to_csv(
         messagebox.showerror("Error", message)
         raise FileExistsError(message)
 
-    df = pd.read_table(navPath, header=0, names = ["file", "", "lat", "lon", "yaw"], usecols=[0, 1, 2, 3, 4], parse_dates={"taken_at" : [0, 1]}, dayfirst=True)
-    df.insert(0, "file", videoName, allow_duplicates=True)
-    df.to_csv(outFilepath, index=False)
+    try:
+        df = pd.read_table(navPath, parse_dates={"taken_at" : ["DATE", "HEURE"]}, dayfirst=True)
+    except ValueError as e:
+        messagebox.showerror("Error", "Failed to read timestamp navigation file: {}".format(e))
+        return
+    outdata = pd.DataFrame(columns=['file', 'taken_at'])
+    outdata.taken_at = df.taken_at
+    outdata.file = videoName
+    if "LAT_PAGURE" and "LONG_PAGURE" in df.columns:
+        latitudes = df.LAT_PAGURE
+        longitudes = df.LONG_PAGURE
+    else:
+        lat_mask = df.columns.str.startswith(('lat', 'LAT', 'Lat'))
+        lon_mask = df.columns.str.startswith(('lon', 'LON', 'Lon', 'lng'))
+        # get first ids of masks (numpy arrays whith boolean values) meeting conditions
+        lat_idx = np.where(lat_mask ==  True)[0][0]
+        lon_idx = np.where(lon_mask ==  True)[0][0]
+        latitudes = df.iloc[:,lat_idx]
+        longitudes = df.iloc[:,lon_idx]
+    if not latitudes.empty:
+        outdata.insert(len(outdata.columns), "lat", latitudes)
+    if not longitudes.empty:
+        outdata.insert(len(outdata.columns), "lon", longitudes)
+    yaw_mask = df.columns.str.startswith(('cap', 'CAP', 'yaw', 'YAW', 'heading', 'HEADING'))
+    if yaw_mask.any():
+        yaw_idx = np.where(yaw_mask == True)[0][0]
+        outdata.insert(len(outdata.columns), "yaw", df.iloc[:,yaw_idx])
+
+    outdata.to_csv(outFilepath, index=False)
 
     if (volumeId):
         from components.biigle import Api
@@ -668,8 +699,13 @@ def eco_profiler(
             latitudes = data_nav["LAT_PAGURE"]
             longitudes = data_nav["LONG_PAGURE"]
         else:
-            latitudes = data_nav["LAT_NAVIRE"]
-            longitudes = data_nav["LONG_NAVIRE"]
+            lat_mask = data_nav.columns.str.startswith(('lat', 'LAT', 'Lat'))
+            lon_mask = data_nav.columns.str.startswith(('lon', 'LON', 'Lon', 'lng'))
+            # get first ids of masks (numpy arrays whith boolean values) meeting regex conditions
+            lat_idx = np.where(lat_mask == True)[0][0]
+            lon_idx = np.where(lon_mask == True)[0][0]
+            latitudes = data_nav.iloc[:,lat_idx]
+            longitudes = data_nav.iloc[:,lon_idx]
 
         time_offset = pd.to_timedelta(nav_times[0])
         start_value = None
