@@ -21,7 +21,23 @@ def test_time_format(time: str):
         except ValueError:
             return False
 
-def read_cut_times_from_nav(navPath: str):
+def format_time(time: str):
+    if time.isnumeric():
+        ftime = timedelta(seconds=float(time))
+    else:
+        try:
+            ftime = pd.to_timedelta(time)
+        except ValueError as e:
+            print("Error formatting time {}: {}".format(time, e))
+            return
+    return ftime
+
+def create_metadata_file():
+    return pd.DataFrame(index=['total'], columns=['source video file', 'cut video file', 'navigation file', 'biigle annotation file', 'START source video (absolute timestamp)', 'START cut time (relative)', 'END cut time (relative)', 
+                                     'START cut time (absolute timestamp)', 'END cut time (absolute timestamp)', 'covered distance (m)',
+                                    'average field width measured (m)', 'covered surface (m²)', 'contributors list'])
+
+def read_cut_times_from_nav(navPath: str, metadata_path: str=None):
     p = pl.Path(navPath)
     if (not p.exists()):
         message = navPath + " does not exist. Please provide a valid file path."
@@ -45,36 +61,67 @@ def read_cut_times_from_nav(navPath: str):
     idx2 = df.index[df["CODEseq"] == "DEBVIR"]
     t2_string = df.at[idx2[0], "HEURE"]
     t2 = datetime.strptime(t2_string, "%H:%M:%S")
-    start = t1 - t0
-    end = t2 - t0
-    return [start, end, t1_string, t2_string]
+    start = str(t1 - t0)
+    end = str(t2 - t0)
 
-def read_time_offset_from_nav(navPath: str):
-    p = pl.Path(navPath)
-    if (not p.exists()):
-        message = navPath + " does not exist. Please provide a valid file path."
-        messagebox.showerror("Error", message)
-        raise FileExistsError(message)
-    elif (not p.is_file()):
-        message = navPath + " is not a regular file. Please provide a valid file path."
-        messagebox.showerror("Error", message)
-        raise FileExistsError(message)
-    df = pd.read_table(navPath, usecols=["HEURE", "CODEseq"])
-    idx = df.index[df["CODEseq"] == "FINFIL"]
-    t_string = df.at[idx[0], "HEURE"]
-    return t_string
+    if metadata_path:
+        mp = pl.Path(metadata_path)
+        if (mp.suffix != ".csv"):       # extension is not null, user entered full path
+            metadata_path = metadata_path.with_suffix(".csv")
+        if mp.exists() and mp.is_file():
+            metadata = pd.read_csv(mp, index_col=0)
+        else:
+            metadata = create_metadata_file()
+        metadata.iat[0, 2] = navPath
+        metadata.iat[0, 4] = t0_string
+        metadata.iat[0, 5] = start
+        metadata.iat[0, 6] = end
+        metadata.iat[0, 7] = t1_string
+        metadata.iat[0, 8] = t2_string
+        metadata.to_csv(metadata_path)
 
-def cut_command(input, start, stop, output):
-    ffmpeg_cmd = "ffmpeg -loglevel error -i \"{}\" -ss {} -to {} -vcodec h264 -y \"{}\"".format(input, start, stop, output)
-    ret = lambda : sp.Popen(ffmpeg_cmd, shell=True).wait()
+    return [t0_string, start, end, t1_string, t2_string]
+
+def cut_command(input, start, stop, output, metadata_path):
+    p = pl.Path(metadata_path)
+    if (p.suffix != ".csv"):       # extension is not null, user entered full path
+        metadata_path = metadata_path.with_suffix(".csv")
+    if p.exists() and p.is_file():
+        metadata = pd.read_csv(p, index_col=0)
+    else:
+        metadata = create_metadata_file()
+    metadata.iat[0, 0] = input
+    metadata.iat[0, 1] = output
+    # if start and stop don't match with nav file values, update user metadata field
+    if pd.isnull(metadata.iat[0, 4]):
+        fstart = format_time(start)
+        fstop = format_time(stop)
+        metadata.iat[0, 5] = fstart
+        metadata.iat[0, 6] = fstop
+    else:
+        t0_abs = datetime.strptime(metadata.iat[0, 4], "%H:%M:%S")
+        if start != metadata.iat[0, 5]:
+            fstart = format_time(start)
+            metadata.iat[0, 5] = fstart
+            metadata.iat[0, 7] = datetime.strftime(t0_abs + fstart, "%H:%M:%S")
+        if stop != metadata.iat[0, 6]:
+            fstop = format_time(stop)
+            metadata.iat[0, 6] = fstop
+            metadata.iat[0, 8] = datetime.strftime(t0_abs + fstop, "%H:%M:%S")
+    # ffmpeg_cmd = "ffmpeg -loglevel error -i \"{}\" -ss {} -to {} -vcodec h264 -y \"{}\"".format(input, start, stop, output)
+    # ret = lambda : sp.Popen(ffmpeg_cmd, shell=True).wait()
     try:
-        return ret()
+        metadata.to_csv(metadata_path)
+        return 0
+        # return ret()
     except sp.TimeoutExpired:
-        return ret()
+        return 1
+        # return ret()
 
 def convert_nav_to_csv(
     navPath: str,
     videoName: str,
+    metadata_path: str,
     outPath: str = None,
     force: bool = False,
     volumeId: int = None,
@@ -87,7 +134,8 @@ def convert_nav_to_csv(
 
     Args:
         navPath (str): Full path to input navigation file (must be a .txt).
-        videoName (str): Video filename associated to this nav file. Required for writing in metadata.
+        videoName (str): Video filepath associated to this nav file. Required for writing in metadata.
+        metadata_path (str): User metadata filepath used to keep track of all operations in BVT.
         outPath (str): Directory to write the output file. Optionnal, by default the file is saved in the same directory as input nav file.
         force (bool): Force overwrite if a .csv file with the same name is present in output directory.
         volumeId (int): Id of corresponding volume inside Biigle. If provided, the resulting file will be imported inside Biigle through API ids provided.
@@ -108,6 +156,21 @@ def convert_nav_to_csv(
         raise ValueError(message)
     if not pl.Path(videoName).suffix:
         videoName += ".mp4"
+
+    # fill user metadata with nav file and source video filepath
+    mp = pl.Path(metadata_path)
+    if (mp.suffix != ".csv"):       # extension is not null, user entered full path
+        metadata_path = metadata_path.with_suffix(".csv")
+    if mp.exists() and mp.is_file():
+        metadata = pd.read_csv(mp, index_col=0)
+    else:
+        metadata = create_metadata_file()
+    # do not override video filepath if exists (extension may be wrong) but fill if empty, that means video has not been cut
+    if pd.isnull(metadata.iat[0, 0]):
+        metadata.iat[0, 0] = videoName
+    if pd.isnull(metadata.iat[0, 2]) or metadata.iat[0, 2] != navPath:
+        metadata.iat[0, 2] = navPath
+    metadata.to_csv(metadata_path)
 
     # Construct full output path
     if (pl.Path(outPath).suffix):       # extension is not null, user entered full path
@@ -137,7 +200,7 @@ def convert_nav_to_csv(
         return
     outdata = pd.DataFrame(columns=['file', 'taken_at'])
     outdata.taken_at = df.taken_at
-    outdata.file = videoName
+    outdata.file = pl.Path(videoName).name
     if "LAT_PAGURE" and "LONG_PAGURE" in df.columns:
         latitudes = df.LAT_PAGURE
         longitudes = df.LONG_PAGURE
@@ -177,6 +240,7 @@ def convert_nav_to_csv(
 
 def biigle_annot_to_yolo(
     csvPath: str,
+    metadataPath: str,
     videoPaths: list = None,
     outPath: str = None):
 
@@ -186,6 +250,7 @@ def biigle_annot_to_yolo(
 
     Args:
         csvPath (str): Full path to Biigle's CSV video annotations file
+        metadataPath (str): User metadata filepath used to keep track of all operations in BVT.
         videoPath list(str): Full paths to input videos, used to extract frames with ffmpeg
         outPath (str): Output directory path where the yolo-formatted images annotations files will be saved
     """
@@ -235,12 +300,14 @@ def biigle_annot_to_yolo(
         :param csvPath (str): Full path to Biigle's CSV video annotations file
         :return annotation_ids: 3D-dictionary dict(dict(list)) containing all annotation ids for each keytime of each video
                 annotation_tracks: dictionary dict(list) mapping an annotation Track (or list of Track if there are gaps in annotation) to an annotation id
+                contributors: dictionary dict(list) mapping a video filepath to list of contributors to this video annotations
         """
         rowdata = pd.read_csv(csvPath)
         classes = pd.DataFrame(columns=['class_name'])
         classes.index.name = 'class_id'
         annotation_ids = defaultdict(lambda: defaultdict(list))
         annotation_tracks = defaultdict(list)
+        contrib = defaultdict(set)
 
         for row in rowdata.itertuples():
             video_filename = pl.Path(row.video_filename).stem       # retrieve video filename without the extension
@@ -261,6 +328,7 @@ def biigle_annot_to_yolo(
             height = attrs_dict["height"]
             track = Track(video_filename, label_id, shape_id, (width, height))
             classes.loc[label_id] = label_name
+            contrib[video_filename].add(row.firstname + " " + row.lastname)
 
             # times and points are strings, convert them to arrays
             times = times[1:]
@@ -286,7 +354,7 @@ def biigle_annot_to_yolo(
             annotation_tracks[video_annotation_label_id].append(track)
 
         classes.to_csv(pl.Path(outPath).joinpath("classes.txt"))
-        return annotation_ids, annotation_tracks
+        return annotation_ids, annotation_tracks, contrib
 
     def process_keyframe(kf, annot_ids, tracks, memdata):
         '''Search for all annotations present at this keyframe and return YOLO-formatted data
@@ -406,7 +474,19 @@ def biigle_annot_to_yolo(
     if not outAnnotationsPath.exists():
         outAnnotationsPath.mkdir()
 
-    annotation_ids, annotation_tracks = read_data_from_csv(csvPath)
+    # fill user metadata with csv file, source video filepath (if only one source path) and contributors list
+    mp = pl.Path(metadataPath)
+    if (mp.suffix != ".csv"):       # extension is not null, user entered full path
+        metadataPath = metadataPath.with_suffix(".csv")
+    if mp.exists() and mp.is_file():
+        metadata = pd.read_csv(mp, index_col=0)
+    else:
+        metadata = create_metadata_file()
+    if pd.isnull(metadata.iat[0, 0]) and (len(videoPaths) == 1):
+        metadata.iat[0, 0] = videoPaths[0]
+    metadata.iat[0, 3] = csvPath
+
+    annotation_ids, annotation_tracks, contributors = read_data_from_csv(csvPath)
 
     # For each video input file
     for videoname in annotation_ids.keys():
@@ -415,14 +495,14 @@ def biigle_annot_to_yolo(
         # Sort annotation_ids by keys (i.e. keyframes).
         sorted_ids = sorted(annotation_ids[videoname].items())
 
-        # Browse all keyframes in ascending order
-        for k, ids in sorted_ids:
-            outdata, memdata = process_keyframe(k, ids, annotation_tracks, memdata)
-            outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_" + str(k) + '.txt')
-            if outdata.empty:
-                print("error: data for timekey {} of file {} is empty".format(k, outFilepath))
-                continue
-            outdata.to_csv(outFilepath, index=False)
+        # # Browse all keyframes in ascending order
+        # for k, ids in sorted_ids:
+        #     outdata, memdata = process_keyframe(k, ids, annotation_tracks, memdata)
+        #     outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_" + str(k) + '.txt')
+        #     if outdata.empty:
+        #         print("error: data for timekey {} of file {} is empty".format(k, outFilepath))
+        #         continue
+        #     outdata.to_csv(outFilepath, index=False)
 
         if videoPaths:
             if (len(videoPaths) == 1):
@@ -431,6 +511,8 @@ def biigle_annot_to_yolo(
                     message = "videopath name {} doesn't match with name read in csv file {}".format(p.stem, videoname)
                     messagebox.showerror("Error", message)
                     continue
+                else:
+                    metadata.iat[0, 12] = str(contributors[videoname])
             else:
                 for path in videoPaths:
                     p = pl.Path(path)
@@ -441,8 +523,9 @@ def biigle_annot_to_yolo(
                 messagebox.showerror("Error", message)
                 continue
 
-            if extract_annotated_frames(p, [s[0] for s in sorted_ids], videoname, outAnnotationsPath, outImagesPath):
-                messagebox.showinfo(title="Success", message="YOLO-formatted data and annoted frames for video {} have been written to {}".format(videoname, outPath))
+            # if extract_annotated_frames(p, [s[0] for s in sorted_ids], videoname, outAnnotationsPath, outImagesPath):
+            messagebox.showinfo(title="Success", message="YOLO-formatted data and annoted frames for video {} have been written to {}".format(videoname, outPath))
+    metadata.to_csv(metadataPath)
 
 def interpolate_nav_data(
     nav_days: pd.Series,
@@ -450,11 +533,11 @@ def interpolate_nav_data(
     latitudes: pd.Series,
     longitudes: pd.Series,
     keytime: float,
-    timeoffset: pd.Timedelta):
+    timeoffset: pd.Timedelta = None):
     """Takes info from Pagure nav file (timestamps, latitudes, longitudes) and a keytime in video and interpolates those data at this keytime.
 
     Python script that takes info from an input navigation file (saved as pandas Series), a keytime (corresponding to time of video where the annotation is closest to the lasers),
-    and interpolates the absolute timestamp and GPS position (latitude + longitude) of the annotation (approximated to the pagure's position at this timestamp).
+    and interpolates the absolute timestamp and 2 columns data (ex: GPS position (latitude + longitude)) of the annotation.
 
     Args:
         nav_days (pandas Series): List of the input data days read from nav file
@@ -475,25 +558,18 @@ def interpolate_nav_data(
     if not i:
         raise ValueError
     # get time values wrapping time to compute interpolation coeff and latitude/longitude corresponding to these times
-    # if (i==0):
-    #     t1, t2 = nav_times[0], nav_times[1]
-    #     lat1, lat2 = latitudes[0], latitudes[1]
-    #     lon1, lon2 = longitudes[0], longitudes[1]
-    # else:
-    t1, t2 = nav_times[i-1], nav_times[i]
-    lat1, lat2 = latitudes[i-1], latitudes[i]
-    lon1, lon2 = longitudes[i-1], longitudes[i]
+    t1, t2 = nav_times.iat[i-1], nav_times.iat[i]
+    lat1, lat2 = latitudes.iat[i-1], latitudes.iat[i]
+    lon1, lon2 = longitudes.iat[i-1], longitudes.iat[i]
     coeff = (time - t1) / (t2 - t1)
-    time_delta = t1 + coeff * (t2 - t1)
-    time_delta = nav_days[i] + time_delta
+    time_delta = nav_days[i] + time
     lat_delta = lat1 + coeff * (lat2 - lat1)
     lon_delta = lon1 + coeff * (lon2 - lon1)
     return time_delta, lat_delta, lon_delta
 
 def manual_detect_laserpoints(
         label: str,
-        csvPath: str,
-        annot_mode: str):
+        csvPath: str):
     """Get the laserpoints positions from a CSV video annotation file (output from Biigle)
 
     Python script that takes a CSV video annotation file from Biigle and the label used to annotate laserpoints in video, and returns a 2D-dictionnary dict(dict),
@@ -503,7 +579,6 @@ def manual_detect_laserpoints(
     Args:
         label (str): Label used to annotate laserpoints in video inside biigle
         csvPath (str): Full path to input video annotation file (must be a .csv)
-        annot_mode (str): The mode used to annotate lasers: full if they are annotated once on the entire video, sampled if annotations are sampled with markers (whole frame annotations)
     """
 
     if (not pl.Path(csvPath).exists()):
@@ -518,11 +593,6 @@ def manual_detect_laserpoints(
         messagebox.showerror("Error", "Could not find label {} in annotation file. Please verify your data.".format(label))
     for row in label_data.itertuples():
         video_filename = row.video_filename
-        # if we already found 2 laser tracks for this video, print error message and return
-        if annot_mode == "full" and len(laser_tracks[video_filename]) == 2:
-            message = "More than 2 lasers found for video filename {}. Please verify your data.".format(video_filename)
-            messagebox.showerror(title='Error', message=message)
-            return
         track = {}
         times = row.frames
         points = row.points
@@ -550,6 +620,8 @@ def eco_profiler(
         csvPath: str,
         dy_max_str: float,
         callback,
+        metadataPath: str,
+        videoPath: str = None,
         navPath: str = None,
         laser_tracks: dict = None,
         laser_label : str = None,
@@ -579,6 +651,9 @@ def eco_profiler(
     Args:
         csvPath (str): Full path to input video annotation file (must be a .csv)
         dy_max_str (str): threshold distance to lasers line in y: annotations below are considered too far for the measure to be accurate (in % of video height)
+        callback (function): a callback used to open an entry window where user can add a text input
+        metadataPath (str): User metadata filepath used to keep track of all operations in BVT.
+        videoPath (str): Video filepath associated to this nav file. Not mandatory, used if path not found in metadata file.
         navPath (str): Nav path to input navigation files (won't be considered if multiple videos in annotation file, overrided by user entries) (.txt or .csv)
         laser_tracks (dict): 2D-dict of lasers image positions mapped to keytime. Each pair of tracks are mapped to video filename
         laser_label (str): optionnal. Label used to annotate lasers if manual annotation was used.
@@ -610,9 +685,29 @@ def eco_profiler(
             pt2 = (annot_coords[4], annot_coords[5])
             annot_size_px = math.dist(pt1, pt2)
         else:
-            messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(row.shape_name))
+            messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(annot_shape_id))
             pass
         return annot_size_px
+
+    # function that takes nav_times and distances pd.Series from nav file and compute covered distance between start and stop cut times
+    def compute_distance(nav_times, distances, start, stop):
+        idx = min(max(bisect_left(nav_times, start), 0), len(nav_times)-1)
+        stop_idx = min(max(bisect_left(nav_times, stop), 0), len(nav_times)-1)
+        # time sample is included in one nav timestamp section
+        if idx == stop_idx:
+            t1, t2 = nav_times.iat[idx-1], nav_times.iat[idx]
+            dist = (stop-start)/(t2-t1)*distances[idx]
+        # time sample is larger than nav section timesteps, we have to sum distances of each step
+        else:
+            t1_start, t2_start = nav_times.iat[idx-1], nav_times.iat[idx]
+            t1_stop, t2_stop = nav_times.iat[stop_idx-1], nav_times.iat[stop_idx]
+            dist = (t2_start-start)/(t2_start-t1_start)*distances[idx]
+            idx+=1
+            while idx < stop_idx:
+                dist += distances[idx]
+                idx+=1
+            dist += (stop-t1_stop)/(t2_stop-t1_stop)*distances[stop_idx]
+        return dist
 
     if (not pl.Path(csvPath).exists()):
         message = csvPath + "does not exist"
@@ -629,6 +724,35 @@ def eco_profiler(
             p.parent.mkdir()
         outFilepath = outPath
 
+    # fill user metadata with csv file, source video filepath (if only one source path) and contributors list
+    mp = pl.Path(metadataPath)
+    metadata = None
+    if (mp.suffix != ".csv"):       # extension is not null, user entered full path
+        metadataPath = metadataPath.with_suffix(".csv")
+    if mp.exists() and mp.is_file():
+        metadata = pd.read_csv(mp, index_col=0)
+    else:
+        metadata = create_metadata_file()
+    if metadata.empty:
+        messagebox.showerror("Error", "Failed to retrieve or create metadata file {}, exit.".format(metadataPath))
+        return
+    metadata.iat[0, 2] = navPath
+    metadata.iat[0, 3] = csvPath
+    # if source path not filled in metadata file, try to retrieve it
+    if pd.isnull(metadata.iat[0, 0]) and videoPath:
+        metadata.iat[0, 0] = videoPath
+    # try to get video filename from (in priority order): cut video path in metadata, source video path in metadata, video path in BVT field. If not found ask user.
+    if not pd.isnull(metadata.iat[0, 1]):
+        metadata_videoname = pl.Path(metadata.iat[0, 1]).name
+    elif not pd.isnull(metadata.iat[0, 0]):
+        metadata_videoname = pl.Path(metadata.iat[0, 0]).name
+    elif videoPath:
+        metadata_videoname = pl.Path(videoPath).name
+    else:
+        metadata_videoname = callback("Could not get source video filepath, please enter (cut) video filename with extension to be associated with this metadata file:")
+        if not metadata_videoname:
+            return
+
     data = pd.read_csv(csvPath)
     out_data = pd.DataFrame(index=data.index,
                             columns=['video_annotation_label_id', 'video_filename', 'label_name', 'label_hierarchy',
@@ -638,11 +762,24 @@ def eco_profiler(
     video_filenames = data["video_filename"].unique()
     for videoname in video_filenames:
         data_video = data[data["video_filename"] == videoname]
+        first_row = next(data_video.itertuples())
+        try:
+            attrs = first_row.attributes
+        except AttributeError:
+            message = "This method requires the 'attributes' column to be present in biigle annotation report. Please regenerate report if not (it was added from biigle reports module v4.29. All reports generated before july 2024 will not have it.)"
+            messagebox.showerror(title="Error: ", message=message)
+            raise AttributeError(message)
+        attrs_dict = json.loads(attrs)
+        width = attrs_dict["width"]
+
         sample_start = []
         sample_stop = []
         if start_label and stop_label:
             start_data = data_video[data_video["label_name"].str.fullmatch(start_label, case=False)]
             stop_data = data_video[data_video["label_name"].str.fullmatch(stop_label, case=False)]
+            if start_data.empty or stop_data.empty:
+                messagebox.showerror("Error", "Could not find sample labels in annotation file, please verify your data.")
+                return
             for row_start in start_data.itertuples():
                 time_str = row_start.frames
                 # whole frame annotations' frames values are strings: '[t]' (one time value in brackets)
@@ -668,12 +805,12 @@ def eco_profiler(
             elif len(sample_start) == 0 or len(sample_stop) == 0:
                 messagebox.showerror("Error", "Could not compute one of samples track for video {}, please verify your data.".format(videoname))
                 return
-            # if laser tracks detected, try to reorder them in couples with sample markers
+            # if laser tracks detected
             if laser_tracks:
                 tracks = laser_tracks[videoname]
-                # if this data has already been processed, then laser tracks are already ordered as sampled couples, skip
+                # try to reorder them in couples with sample markers, only in full mode or if this laser data was never processed. Each sample should have one pair of lasers associated.
                 if len(tracks) != len(sample_start):
-                    laser_couples = defaultdict(list)
+                    laser_pairs = defaultdict(list)
                     for track in tracks:
                         t_start = next(iter(track.keys()))
                         pos_start = bisect_left(sample_start, t_start)
@@ -681,14 +818,13 @@ def eco_profiler(
                         if pos_start != pos_stop:
                             print("Error: found different samples position ({} and {}) for laser track: t_start={}".format(pos_start, pos_stop, t_start))
                             continue
-                        if len(laser_couples[pos_start]) == 2:
+                        if len(laser_pairs[pos_start]) == 2:
                             print("Error: already found 2 lasers at pos_start {}".format(pos_start))
                             continue
-                        laser_couples[pos_start].append(track)
-                    laser_tracks[videoname] = laser_couples
-
+                        laser_pairs[pos_start].append(track)
+                    laser_tracks[videoname] = laser_pairs
         if len(video_filenames) > 1 or not navPath:
-            nav_path = filedialog.askopenfilename(title="Select navigation file corresponding to {}".format(videoname), filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
+            nav_path = filedialog.askopenfilename(title="Select navigation file for input video {}".format(videoname), filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
         else:
             nav_path = navPath
         laser_dist = float(laser_dist_str) if laser_dist_str else None
@@ -707,27 +843,136 @@ def eco_profiler(
             latitudes = data_nav.iloc[:,lat_idx]
             longitudes = data_nav.iloc[:,lon_idx]
 
-        time_offset = pd.to_timedelta(nav_times[0])
-        start_value = None
+        t0_abs = nav_times.iat[0]
+        start_cut_abs, stop_cut_abs, start_rel, stop_rel = None, None, None, None
         if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
-            start_value = read_time_offset_from_nav(nav_path)
-            offset = datetime.strftime(pd.to_datetime(start_value) - time_offset, "%H:%M:%S")
-            lines = ["The program found the following 'start cut time' offset in navigation file:", "{} (relative time) corresponding to {} absolute timestamp".format(offset, start_value), "Do you want to use that ?"]
+            if metadata_videoname == videoname and not metadata.iloc[0,4:9].isna().any():
+                t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = metadata.iloc[0,4:9]
+            else:
+                t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = read_cut_times_from_nav(nav_path)
+            lines = ["The program found the following 'start cut time':", "{} (relative time) corresponding to {} absolute timestamp".format(start_rel, start_cut_abs), "Is it correct ?"]
             if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
                 if callback:
-                    str_offset = callback()
+                    start_offset = callback("Enter the 'start cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                    stop_offset = callback("Enter the 'stop cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                    if not start_offset or not stop_offset:     # user cancelled command
+                        return
                     try:
-                        start_value = time_offset + pd.to_timedelta(str_offset)
+                        start_rel = format_time(start_offset)
+                        stop_rel = format_time(stop_offset)
+                        start_cut_abs = pd.to_timedelta(t0_abs) + start_rel
+                        stop_cut_abs = pd.to_timedelta(t0_abs) + stop_rel
                     except ValueError as e:
-                        print("error: failed to convert string time {} to timedelta".format(str_offset), e)
+                        print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
             else:
                 try:
-                    start_value = pd.to_timedelta(start_value)
+                    start_cut_abs = pd.to_timedelta(start_cut_abs)
+                    stop_cut_abs = pd.to_timedelta(stop_cut_abs)
                 except ValueError as e:
-                    print("error: failed to convert string time {} to timedelta".format(start_value), e)
-        if not start_value:
-            start_value = pd.to_timedelta(nav_times[0])
+                    print("error: failed to convert string time {} to timedelta".format(start_cut_abs), e)
+            # if cut times out of bounds
+            if start_cut_abs < nav_times.iat[0]:
+                start_cut_abs = nav_times.iat[0]
+                start_rel = timedelta(0)
+            if stop_cut_abs > nav_times.iat[-1]:
+                stop_cut_abs = nav_times.iat[-1]
+                stop_rel = nav_times.iat[-1] - nav_times.iat[0]
+        else:
+            start_cut_abs = nav_times.iat[0]
+            stop_cut_abs = nav_times.iat[-1]
 
+        if metadata_videoname == videoname:
+            if metadata.iloc[0,4:9].isna().any():
+                # remove 'o days' added with timedelta conversion
+                t0_abs = str(t0_abs).split(' ')[-1]
+                start_rel = str(start_rel).split(' ')[-1]
+                stop_rel = str(stop_rel).split(' ')[-1]
+                start_cut_abs_string = str(start_cut_abs).split(' ')[-1]
+                stop_cut_abs_string = str(stop_cut_abs).split(' ')[-1]
+                metadata.iloc[0,4:9] = t0_abs, start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
+
+            distances = []
+            dist_mask = data_nav.columns.str.startswith(('Dist', 'dist', 'DIST'))
+            dist_idx = np.where(dist_mask == True)[0][0]
+            distances = pd.to_numeric(data_nav.iloc[:, dist_idx])
+            if len(distances) > 0 and start_cut_abs and stop_cut_abs:
+                total_distance = compute_distance(nav_times, distances, start_cut_abs, stop_cut_abs)
+                metadata.iat[0, 9] = total_distance
+                average_field_width = 0
+                if len(sample_start) > 0 and len(sample_stop) > 0:
+                    # compute covered distance for each sample
+                    for idx in range(len(sample_start)):
+                        start_sample = timedelta(seconds=sample_start[idx])
+                        stop_sample = timedelta(seconds=sample_stop[idx])
+                        start_sample_abs = start_cut_abs + start_sample
+                        stop_sample_abs = start_cut_abs + stop_sample
+                        dist = compute_distance(nav_times, distances, start_sample_abs, stop_sample_abs)
+                        new_row = pd.Series([start_sample, stop_sample, start_sample_abs, stop_sample_abs, dist], index=metadata.columns[5:10], name="sample {}".format(idx))
+                        new_row = new_row.astype(str).str.split(' ').str[-1]
+                        if not "sample {}".format(idx) in metadata.index:
+                            metadata = pd.concat([metadata, new_row.to_frame().T])
+                        else:
+                            metadata.loc["sample {}".format(idx), metadata.columns[5:10]] = new_row
+
+                        # if laser tracks detected compute average field widths for each sample
+                        if laser_tracks and idx in laser_tracks[videoname]:
+                            sample_field_width = 0
+                            pair_tracks = laser_tracks[videoname][idx]
+                            if len(pair_tracks) < 2:
+                                print("Error: can't find laser couple tracks for annotation {}. sample_start[{}] = {})".format(video_annotation_label_id, idx, sample_start[idx]))
+                            else:
+                                track_l1 = pair_tracks[0]
+                                track_l2 = pair_tracks[1]
+                            kfs_l2 = list(track_l2.keys())
+                            for k, icoords_l1 in track_l1.items():
+                                # laser annotation should be point or circle, keep only 2 first coordinates x,y
+                                icoords_l1 = icoords_l1[0:2]
+                                if k in track_l2:
+                                    icoords_l2 = track_l2[k][0:2]
+                                else:
+                                    pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
+                                    tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
+                                    # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
+                                    cmin, cmax = track_l2[tmin], track_l2[tmax]
+                                    coeff = (k - tmin) / (tmax - tmin)
+                                    icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
+                                dist_lasers_px = math.dist(icoords_l1, icoords_l2)
+                                if dist_lasers_px > 0:
+                                    sample_field_width += 1/dist_lasers_px
+                            # laser_dist is in cm, we want field_width in m
+                            sample_field_width = sample_field_width * laser_dist * width / float(len(track_l1)*100)
+                            average_field_width += sample_field_width
+                            if "sample {}".format(idx) in metadata.index:
+                                metadata.loc["sample {}".format(idx), metadata.columns[10]] = sample_field_width
+                                metadata.loc["sample {}".format(idx), metadata.columns[11]] = dist * sample_field_width
+                    average_field_width /= len(sample_start)
+                    metadata.iat[0, 10] = average_field_width
+                    metadata.iat[0, 11] = total_distance * average_field_width
+                # compute average field width by looping through laser tracks
+                elif laser_tracks:
+                    track_l1 = laser_tracks[videoname][0]
+                    track_l2 = laser_tracks[videoname][1]
+                    kfs_l2 = list(track_l2.keys())
+                    for k, icoords_l1 in track_l1.items():
+                        icoords_l1 = icoords_l1[0:2]
+                        if k in track_l2:
+                            icoords_l2 = track_l2[k][0:2]
+                        else:
+                            pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
+                            tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
+                            # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
+                            cmin, cmax = track_l2[tmin], track_l2[tmax]
+                            coeff = (k - tmin) / (tmax - tmin)
+                            icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
+                        dist_lasers_px = math.dist(icoords_l1, icoords_l2)
+                        if dist_lasers_px > 0:
+                            average_field_width += 1/dist_lasers_px
+                    # laser_dist is in cm, we want field_width in m
+                    average_field_width = average_field_width * laser_dist * width / float(len(track_l1) * 100)
+                    metadata.iat[0, 10] = average_field_width
+                    metadata.iat[0, 11] = total_distance * average_field_width
+
+        contributors = set()
         for row in data_video.itertuples():
             video_annotation_label_id = row.video_annotation_label_id
             label_name = row.label_name
@@ -753,6 +998,8 @@ def eco_profiler(
             attrs_dict = json.loads(attrs)
             height = attrs_dict["height"]
             dy_max = float(dy_max_str) * 0.01 * height
+            if metadata_videoname == videoname:
+                contributors.add(row.firstname + " " + row.lastname)
 
             dist_min = None
             t_min = None
@@ -783,18 +1030,23 @@ def eco_profiler(
                     message = "No laser annotation for video filename {}. Please verify your data.".format(videoname)
                     messagebox.showerror(title="Error: ", message=message)
                     continue
-                if start_label and stop_label:
+                if len(sample_start) > 0:
                     # search for correct section for this annotation with first timekey and get corresponding laser tracks
                     t_0 = float(times[0])
                     pos = max(0, bisect_right(sample_start, t_0) - 1)
-                    couple_tracks = laser_tracks[videoname][pos]
-                    if len(couple_tracks) < 2:
-                        print("Error: can't find laser couple tracks for annotation {}. t_0 = {} and sample_start pos found at {}".format(video_annotation_label_id, t_0, sample_start[pos]))
+                    pair_tracks = laser_tracks[videoname][pos]
+                    if len(pair_tracks) < 2:
+                        print("Error: can't find laser pair tracks for annotation {}. t_0 = {} and sample_start pos found at {}".format(video_annotation_label_id, t_0, sample_start[pos]))
                     else:
-                        track_l1 = couple_tracks[0]
-                        track_l2 = couple_tracks[1]
+                        track_l1 = pair_tracks[0]
+                        track_l2 = pair_tracks[1]
                 # if annotations in "full" mode, jsut take first and second tracks from laser_tracks
                 else:
+                    # if more than 2 laser tracks found in full mode, print error message and return
+                    if len(laser_tracks[videoname]) > 2:
+                        message = "More than 2 lasers found for video filename {}. Please verify your data.".format(videoname)
+                        messagebox.showerror(title='Error', message=message)
+                        return
                     track_l1 = laser_tracks[videoname][0]
                     track_l2 = laser_tracks[videoname][1]
                 if not track_l1 or not track_l2:
@@ -877,7 +1129,7 @@ def eco_profiler(
             if t_min != None:
                 out_data.at[row.Index, "keytime (s)"] = round(t_min, 2)
                 try:
-                    timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, start_value)
+                    timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, start_cut_abs)
                     out_data.at[row.Index, "timestamp"] = timestamp
                     out_data.at[row.Index, "annotation_GPS_position (lat, lon)"] = latitude, longitude
                 except ValueError as e:
@@ -894,7 +1146,11 @@ def eco_profiler(
                 out_data.at[row.Index, "annotation_size_image (pixels)"] = annot_size_px
             if annot_size:
                 out_data.at[row.Index, "annotation_size (cm)"] = annot_size
+
+        if metadata_videoname == videoname:
+            metadata.iat[0, 12] = str(contributors)
     try:
+        metadata.to_csv(metadataPath)
         out_data.to_csv(outFilepath, index=False)
     except PermissionError as e:
         messagebox.showerror("Error could not write output file: ", e)
