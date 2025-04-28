@@ -2,12 +2,10 @@ altgraph==0.17.4
 certifi==2025.1.31
 charset-normalizer==3.4.1
 idna==3.10
-numpy
 opencv-python==4.11.0.86
-pandas
 importlib-metadata==8.5.0
-#numpy~=1.24.4
-#opencv-python==4.11.0.86
+numpy~=1.26
+pandas
 packaging==24.2
 #pandas~=2.0.3
 pillow==10.4.0
