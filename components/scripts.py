@@ -108,20 +108,22 @@ def cut_command(input, start, stop, output, metadata_path):
             fstop = format_time(stop)
             metadata.iat[0, 6] = fstop
             metadata.iat[0, 8] = datetime.strftime(t0_abs + fstop, "%H:%M:%S")
-    # ffmpeg_cmd = "ffmpeg -loglevel error -i \"{}\" -ss {} -to {} -vcodec h264 -y \"{}\"".format(input, start, stop, output)
-    # ret = lambda : sp.Popen(ffmpeg_cmd, shell=True).wait()
+    ffmpeg_cmd = "ffmpeg -loglevel error -i \"{}\" -ss {} -to {} -vcodec h264 -y \"{}\"".format(input, start, stop, output)
+    ret = lambda : sp.Popen(ffmpeg_cmd, shell=True).wait()
     try:
         metadata.to_csv(metadata_path)
-        return 0
-        # return ret()
-    except sp.TimeoutExpired:
+        return ret()
+    except PermissionError as e:
+        messagebox.showerror("Error", e)
         return 1
-        # return ret()
+    except sp.TimeoutExpired:
+        return ret()
 
 def convert_nav_to_csv(
     navPath: str,
     videoName: str,
-    metadata_path: str,
+    callback,
+    metadataPath: str,
     outPath: str = None,
     force: bool = False,
     volumeId: int = None,
@@ -135,7 +137,8 @@ def convert_nav_to_csv(
     Args:
         navPath (str): Full path to input navigation file (must be a .txt).
         videoName (str): Video filepath associated to this nav file. Required for writing in metadata.
-        metadata_path (str): User metadata filepath used to keep track of all operations in BVT.
+        callback (function): a callback used to open an entry window where user can add a text input
+        metadataPath (str): User metadata filepath used to keep track of all operations in BVT.
         outPath (str): Directory to write the output file. Optionnal, by default the file is saved in the same directory as input nav file.
         force (bool): Force overwrite if a .csv file with the same name is present in output directory.
         volumeId (int): Id of corresponding volume inside Biigle. If provided, the resulting file will be imported inside Biigle through API ids provided.
@@ -158,9 +161,9 @@ def convert_nav_to_csv(
         videoName += ".mp4"
 
     # fill user metadata with nav file and source video filepath
-    mp = pl.Path(metadata_path)
+    mp = pl.Path(metadataPath)
     if (mp.suffix != ".csv"):       # extension is not null, user entered full path
-        metadata_path = metadata_path.with_suffix(".csv")
+        metadataPath = metadataPath.with_suffix(".csv")
     if mp.exists() and mp.is_file():
         metadata = pd.read_csv(mp, index_col=0)
     else:
@@ -170,7 +173,6 @@ def convert_nav_to_csv(
         metadata.iat[0, 0] = videoName
     if pd.isnull(metadata.iat[0, 2]) or metadata.iat[0, 2] != navPath:
         metadata.iat[0, 2] = navPath
-    metadata.to_csv(metadata_path)
 
     # Construct full output path
     if (pl.Path(outPath).suffix):       # extension is not null, user entered full path
@@ -194,10 +196,53 @@ def convert_nav_to_csv(
         raise FileExistsError(message)
 
     try:
+        # indata = pd.read_table(navPath)
         df = pd.read_table(navPath, parse_dates={"taken_at" : ["DATE", "HEURE"]}, dayfirst=True)
     except ValueError as e:
         messagebox.showerror("Error", "Failed to read timestamp navigation file: {}".format(e))
         return
+    nav_times = pd.to_timedelta(df.taken_at.astype(str).str.split(' ').str[-1])
+
+    # get cut times and keep nav info accordingly
+    if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(pl.Path(videoName).name)):
+        if not metadata.iloc[0,4:9].isna().any():
+            t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = metadata.iloc[0,4:9]
+        else:
+            t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = read_cut_times_from_nav(navPath)
+        lines = ["The program found the following cut times (relative):", "{} and {} corresponding to absolute timestamps {} and {}".format(start_rel, stop_rel, start_cut_abs, stop_cut_abs), "Is it correct ?"]
+        if not messagebox.askyesno(title="Use cut times ?", message="\n".join(lines)):
+            if callback:
+                start_offset = callback("Enter the 'start cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                stop_offset = callback("Enter the 'stop cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                if not start_offset or not stop_offset:     # user cancelled command
+                    return
+                try:
+                    start_cut_abs = pd.to_timedelta(t0_abs) + format_time(start_offset)
+                    stop_cut_abs = pd.to_timedelta(t0_abs) + format_time(stop_offset)
+                except ValueError as e:
+                    print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
+        else:
+            try:
+                start_cut_abs = pd.to_timedelta(start_cut_abs)
+                stop_cut_abs = pd.to_timedelta(stop_cut_abs)
+            except ValueError as e:
+                    print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
+        if metadata.iloc[0,5:9].isna().any():
+            # remove 'o days' added with timedelta conversion
+            start_rel = str(start_rel).split(' ')[-1]
+            stop_rel = str(stop_rel).split(' ')[-1]
+            start_cut_abs_string = str(start_cut_abs).split(' ')[-1]
+            stop_cut_abs_string = str(stop_cut_abs).split(' ')[-1]
+            metadata.iloc[0,5:9] = start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
+    else:
+        start_cut_abs = nav_times.iat[0]
+        stop_cut_abs = nav_times.iat[-1]
+    if pd.isnull(metadata.iat[0, 4]) or metadata.iat[0, 4] != t0_abs:
+        metadata.iat[0, 4] = t0_abs
+    i_start = max(0, bisect_left(nav_times, start_cut_abs))
+    i_stop = min(bisect_left(nav_times, stop_cut_abs), len(nav_times)-1)
+
+    df = df.iloc[i_start:i_stop+1]
     outdata = pd.DataFrame(columns=['file', 'taken_at'])
     outdata.taken_at = df.taken_at
     outdata.file = pl.Path(videoName).name
@@ -221,7 +266,12 @@ def convert_nav_to_csv(
         yaw_idx = np.where(yaw_mask == True)[0][0]
         outdata.insert(len(outdata.columns), "yaw", df.iloc[:,yaw_idx])
 
-    outdata.to_csv(outFilepath, index=False)
+    try:
+        outdata.to_csv(outFilepath, index=False)
+        metadata.to_csv(metadataPath)
+    except PermissionError as e:
+        messagebox.showerror("Error", e)
+        return
 
     if (volumeId):
         from components.biigle import Api
@@ -495,14 +545,14 @@ def biigle_annot_to_yolo(
         # Sort annotation_ids by keys (i.e. keyframes).
         sorted_ids = sorted(annotation_ids[videoname].items())
 
-        # # Browse all keyframes in ascending order
-        # for k, ids in sorted_ids:
-        #     outdata, memdata = process_keyframe(k, ids, annotation_tracks, memdata)
-        #     outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_" + str(k) + '.txt')
-        #     if outdata.empty:
-        #         print("error: data for timekey {} of file {} is empty".format(k, outFilepath))
-        #         continue
-        #     outdata.to_csv(outFilepath, index=False)
+        # Browse all keyframes in ascending order
+        for k, ids in sorted_ids:
+            outdata, memdata = process_keyframe(k, ids, annotation_tracks, memdata)
+            outFilepath = pl.Path(outAnnotationsPath).joinpath(videoname + "_" + str(k) + '.txt')
+            if outdata.empty:
+                print("error: data for timekey {} of file {} is empty".format(k, outFilepath))
+                continue
+            outdata.to_csv(outFilepath, index=False)
 
         if videoPaths:
             if (len(videoPaths) == 1):
@@ -523,9 +573,13 @@ def biigle_annot_to_yolo(
                 messagebox.showerror("Error", message)
                 continue
 
-            # if extract_annotated_frames(p, [s[0] for s in sorted_ids], videoname, outAnnotationsPath, outImagesPath):
-            messagebox.showinfo(title="Success", message="YOLO-formatted data and annoted frames for video {} have been written to {}".format(videoname, outPath))
-    metadata.to_csv(metadataPath)
+            if extract_annotated_frames(p, [s[0] for s in sorted_ids], videoname, outAnnotationsPath, outImagesPath):
+                messagebox.showinfo(title="Success", message="YOLO-formatted data and annoted frames for video {} have been written to {}".format(videoname, outPath))
+    try:
+        metadata.to_csv(metadataPath)
+    except PermissionError as e:
+        messagebox.showerror("Error", e)
+        return
 
 def interpolate_nav_data(
     nav_days: pd.Series,
@@ -851,7 +905,7 @@ def eco_profiler(
             else:
                 t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = read_cut_times_from_nav(nav_path)
             lines = ["The program found the following 'start cut time':", "{} (relative time) corresponding to {} absolute timestamp".format(start_rel, start_cut_abs), "Is it correct ?"]
-            if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
+            if not messagebox.askyesno(title="Use cut times ?", message="\n".join(lines)):
                 if callback:
                     start_offset = callback("Enter the 'start cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
                     stop_offset = callback("Enter the 'stop cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
@@ -869,7 +923,7 @@ def eco_profiler(
                     start_cut_abs = pd.to_timedelta(start_cut_abs)
                     stop_cut_abs = pd.to_timedelta(stop_cut_abs)
                 except ValueError as e:
-                    print("error: failed to convert string time {} to timedelta".format(start_cut_abs), e)
+                    print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
             # if cut times out of bounds
             if start_cut_abs < nav_times.iat[0]:
                 start_cut_abs = nav_times.iat[0]
@@ -877,19 +931,19 @@ def eco_profiler(
             if stop_cut_abs > nav_times.iat[-1]:
                 stop_cut_abs = nav_times.iat[-1]
                 stop_rel = nav_times.iat[-1] - nav_times.iat[0]
-        else:
-            start_cut_abs = nav_times.iat[0]
-            stop_cut_abs = nav_times.iat[-1]
-
-        if metadata_videoname == videoname:
-            if metadata.iloc[0,4:9].isna().any():
+            # update eventually metadata file
+            if metadata_videoname == videoname and metadata.iloc[0,5:9].isna().any():
                 # remove 'o days' added with timedelta conversion
-                t0_abs = str(t0_abs).split(' ')[-1]
                 start_rel = str(start_rel).split(' ')[-1]
                 stop_rel = str(stop_rel).split(' ')[-1]
                 start_cut_abs_string = str(start_cut_abs).split(' ')[-1]
                 stop_cut_abs_string = str(stop_cut_abs).split(' ')[-1]
-                metadata.iloc[0,4:9] = t0_abs, start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
+                metadata.iloc[0,5:9] = start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
+        else:
+            start_cut_abs = nav_times.iat[0]
+            stop_cut_abs = nav_times.iat[-1]
+        if metadata_videoname == videoname and metadata.iat[0,4] != t0_abs:
+            metadata.iat[0,4] = t0_abs
 
             distances = []
             dist_mask = data_nav.columns.str.startswith(('Dist', 'dist', 'DIST'))
@@ -1154,4 +1208,5 @@ def eco_profiler(
         out_data.to_csv(outFilepath, index=False)
     except PermissionError as e:
         messagebox.showerror("Error could not write output file: ", e)
+        return False
     return True

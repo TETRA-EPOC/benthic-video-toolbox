@@ -222,6 +222,11 @@ class PreprocessPage(tk.Frame):
             entry.insert(0, text)
             entry.configure(foreground="#A9A9A9")
 
+    def entry_cb(self, message):
+        window = entryWindow(self, "Enter value", message)
+        self.wait_window(window.top)
+        return window.value
+
     def cut_video(self):
         self.video_path = self.video_entry.get()
         self.nav_path = self.nav_entry.get()
@@ -305,11 +310,15 @@ class PreprocessPage(tk.Frame):
                 s = w.value
                 if not s:
                     return
-                self.video_path = pl.Path(self.video_path).with_suffix(s)
+                try:
+                    self.video_path = pl.Path(self.video_path).with_suffix(s)
+                except ValueError as e:
+                    messagebox.showerror("Error", e)
+                    return
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(self.nav_path).parent, filetypes=[('csv files', '*.csv'), ('all files', '*')], defaultextension='.csv')
         if not output_path:
             return
-        result = scripts.convert_nav_to_csv(self.nav_path, self.video_path, self.user_metadata_path, output_path, True, volume_id, email, token)
+        result = scripts.convert_nav_to_csv(self.nav_path, self.video_path, self.entry_cb, self.user_metadata_path, output_path, True, volume_id, email, token)
         if result:
             messagebox.showinfo("Success", "Metadata file has been written to {}".format(output_path))
         else:
@@ -470,11 +479,6 @@ class PostprocessPage(tk.Frame):
             messagebox.showerror("Error", "Operation failed, please retry.")
 
     def eco_profiler(self):
-        def entry_cb(message):
-            window = entryWindow(self, "Enter value", message)
-            self.wait_window(window.top)
-            return window.value
-
         csv_path = self.csv_entry.get()
         if not csv_path:
             csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
@@ -510,7 +514,7 @@ class PostprocessPage(tk.Frame):
                 return
         if not self.laser_tracks:
             if messagebox.askyesno(title="Info", message="Laserpoints have not been detected yet, do you want to export eco profiler anyway ? (Without size measurement)"):
-                result = scripts.eco_profiler(csv_path, threshold, entry_cb, user_metadata_path, video_path, nav_path, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
+                result = scripts.eco_profiler(csv_path, threshold, preprocessTab.entry_cb, user_metadata_path, video_path, nav_path, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
             else:
                 messagebox.showerror("Error", "Export cancelled, please proceed to laser detection first.")
                 return
@@ -529,7 +533,7 @@ class PostprocessPage(tk.Frame):
                 laser_dist = window.value
                 if not laser_dist:   # if user cancelled command
                     return
-            result = scripts.eco_profiler(csv_path, threshold, entry_cb, user_metadata_path, video_path, nav_path, self.laser_tracks, laser_label, laser_dist, start_sample, stop_sample, output_path)
+            result = scripts.eco_profiler(csv_path, threshold, preprocessTab.entry_cb, user_metadata_path, video_path, nav_path, self.laser_tracks, laser_label, laser_dist, start_sample, stop_sample, output_path)
         if result:
             messagebox.showinfo("Success", "Ecological profiler file has been written to {}".format(output_path))
         else:
