@@ -74,6 +74,11 @@ def get_csv_path(page, event=None):
     page.csv_entry.delete(0, "end")
     page.csv_entry.insert('end', page.csv_path)
 
+def get_user_metadata_path(page, event=None):
+    page.user_metadata_path = convert_path(page.user_metadata_entry.get())
+    page.user_metadata_entry.delete(0, "end")
+    page.user_metadata_entry.insert('end', page.user_metadata_path)
+
 def drop(stringvar, event):
     if(platform.system() == "Windows"):
         s = event.data.replace("/", "\\")
@@ -192,6 +197,21 @@ class PreprocessPage(tk.Frame):
         self.volume_id_entry = ttk.Entry(self.load_frame, width=10)
         self.volume_id_entry.pack(padx=20)
 
+        # user metadata file path
+        self.user_metadata_string = tk.StringVar()
+        self.user_metadata_path = None
+        self.user_metadata_frame = ttk.Frame(self)
+        self.user_metadata_frame.pack(side="bottom", padx=10, pady=20, fill="x")
+        self.user_metadata_label = ttk.Label(self.user_metadata_frame, text="User metadata path:")
+        self.user_metadata_label.pack(side="left", padx=2)
+        if 'tkinterDnD' in sys.modules:
+            self.user_metadata_entry = ttk.Entry(self.user_metadata_frame, ondrop=lambda event: drop(self.user_metadata_string, event), text=self.user_metadata_string)
+        else:
+            self.user_metadata_entry = ttk.Entry(self.user_metadata_frame, text=self.user_metadata_string)
+        self.user_metadata_entry.pack(fill="x", padx=2)
+        if 'wslPath' in sys.modules:
+            self.user_metadata_entry.bind("<FocusOut>", lambda event: get_user_metadata_path(self))
+
     def remove_example_cb(self, entry, event=None):
         if str(entry.cget("foreground")) == "#A9A9A9":
             entry.delete(0, "end")
@@ -202,36 +222,56 @@ class PreprocessPage(tk.Frame):
             entry.insert(0, text)
             entry.configure(foreground="#A9A9A9")
 
+    def entry_cb(self, message):
+        window = entryWindow(self, "Enter value", message)
+        self.wait_window(window.top)
+        return window.value
+
     def cut_video(self):
         self.video_path = self.video_entry.get()
         self.nav_path = self.nav_entry.get()
+        self.user_metadata_path = self.user_metadata_string.get()
         if (not self.video_path):
             self.video_path = filedialog.askopenfilename(parent=self, title="Choose a video file to cut", filetypes=[('all', '*'), ('avi videos', '*.avi'), ('mp4 videos', '*.mp4')])
         p = pl.Path(self.video_path)
         if not p.exists() or not p.is_file():
             messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(self.video_path))
+        if not self.user_metadata_path:
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_entry.delete(0, "end")
+            self.user_metadata_entry.insert(0, self.user_metadata_path)
         if (not self.nav_path or len(self.nav_path) == 0):
             if (str(self.cut_to_entry.cget("foreground")) or str(self.cut_from_entry.cget("foreground"))) == "#A9A9A9" or not self.cut_from_entry.get() or not self.cut_to_entry.get():
-                messagebox.showerror(title="Error: ", message="If no navigation file is provided, you need to specify 'From' and 'To' times (with format HH:MM:SS or in seconds) to cut video file.")
+                messagebox.showerror(title="Error: ", message="If no navigation file is provided, you need to specify start and end cut times (in seconds or with format HH:MM:SS) to cut video file.")
                 return
             else:
                 start = str(self.cut_from_entry.get())
                 end = str(self.cut_to_entry.get())
                 if not scripts.test_time_format(start) or not scripts.test_time_format(end):
-                    messagebox.showerror(title="Error: ", message="Wrong format for start/end values. Please use seconds or HH:MM:SS.")
+                    messagebox.showerror(title="Error: ", message="Wrong format for start_value/end values. Please use seconds or HH:MM:SS.")
                     return
         else:
-            start, end = scripts.read_cut_times_from_nav(self.nav_path)
-            lines = ["The program found the following cutting times in navigation file:", "{} and {}".format(start, end), "Do you want to proceed ?"]
-            if not (messagebox.askokcancel(title="Confirm cut times", message="\n".join(lines))):
+            try:
+                t0, start, end, start_abs, end_abs = scripts.read_cut_times_from_nav(self.nav_path, self.user_metadata_path)
+            except:
                 return
+            lines = ["The program found the following cut times (relative) in navigation file:", "{} and {} corresponding to absolute timestamps {} and {}".format(start, end, start_abs, end_abs), "Do you want to proceed ?"]
+            if not (messagebox.askyesno(title="Confirm cut times", message="\n".join(lines))):
+                window = entryWindow(self, "Time cut start", "Enter the 'start cut time' (relative) in seconds or with format HH:MM:SS:")
+                self.wait_window(window.top)
+                start = window.value
+                window = entryWindow(self, "Time cut end", "Enter the 'end cut time' (relative) in seconds or with format HH:MM:SS:")
+                self.wait_window(window.top)
+                end = window.value
+                if not start or not end:
+                    return
             self.cut_from_entry.delete(0, "end")
             self.cut_from_entry.insert(0, start)
             self.cut_to_entry.delete(0, "end")
             self.cut_to_entry.insert(0, end)
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", filetypes=[('mp4 videos', '*.mp4'), ('avi videos', '*.avi'), ('mpeg videos', '*.mpeg'),
                                                     ('quicktime videos', '*.mov'), ('all files', '*')], defaultextension='.mp4')
-        result = scripts.cut_command(self.video_path, start, end, output_path)
+        result = scripts.cut_command(self.video_path, start, end, output_path, self.user_metadata_path)
         if result == 0:
             messagebox.showinfo("Success", "Video {} has been successfully cut and has been saved to {}".format(p.name, output_path))
         else:
@@ -240,10 +280,15 @@ class PreprocessPage(tk.Frame):
     def convert_nav_to_csv(self):
         self.video_path = self.video_string.get()
         self.nav_path = self.nav_entry.get()
+        self.user_metadata_path = self.user_metadata_string.get()
         if not self.nav_path:
             self.nav_path = filedialog.askopenfilename(title="Choose a Pagure navigation file to convert", filetypes=[('text files', '*.txt')])
             if not self.nav_path:   # if user cancelled command
                 return
+        if not self.user_metadata_path:
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_entry.delete(0, "end")
+            self.user_metadata_entry.insert(0, self.user_metadata_path)
         apiTab = app.tabControl.nametowidget(app.tabControl.tabs()[2])
         email = apiTab.email_entry.get()
         token = apiTab.token_entry.get()
@@ -252,26 +297,28 @@ class PreprocessPage(tk.Frame):
             messagebox.showerror(title="Error: ", message="To connect to Biigle API, please fill in the login details inside 'Biigle API Login' tab.")
             return
         if not self.video_path:
-            window = entryWindow(self, "Video name", "Enter the video filename associated with this navigation file:")
+            window = entryWindow(self, "Video name", "Enter the video (cut if so) full path associated with this navigation file:")
             self.wait_window(window.top)
-            video_name = window.value
-            if not video_name:   # if user cancelled command
+            self.video_path = window.value
+            if not self.video_path:   # if user cancelled command
                 return
-        else:
-            video_name = pl.Path(self.video_path).name
-        s = pl.Path(video_name).suffix
+        s = pl.Path(self.video_path).suffix
         if s and s != ".mp4":
-            if not messagebox.askyesno("Warning", "Video extension is {}, is it the same as for uploaded file on Biigle (note that cut movies are converted to .mp4)?".format(s)):
+            if not messagebox.askyesno("Warning", "Video extension is {}, is it the same as the file loaded on Biigle ? (Note that cut movies are converted to .mp4)".format(s)):
                 w = entryWindow(self, "Video extension", "Enter the video extension of the uploaded file on Biigle:")
                 self.wait_window(w.top)
                 s = w.value
                 if not s:
                     return
-            video_name = pl.Path(video_name).with_suffix(s)
+                try:
+                    self.video_path = pl.Path(self.video_path).with_suffix(s)
+                except ValueError as e:
+                    messagebox.showerror("Error", e)
+                    return
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(self.nav_path).parent, filetypes=[('csv files', '*.csv'), ('all files', '*')], defaultextension='.csv')
         if not output_path:
             return
-        result = scripts.convert_nav_to_csv(self.nav_path, video_name, output_path, True, volume_id, email, token)
+        result = scripts.convert_nav_to_csv(self.nav_path, self.video_path, self.entry_cb, self.user_metadata_path, output_path, True, volume_id, email, token)
         if result:
             messagebox.showinfo("Success", "Metadata file has been written to {}".format(output_path))
         else:
@@ -315,7 +362,7 @@ class PostprocessPage(tk.Frame):
         self.mode_frame.pack(anchor="w", padx=10, pady=10)
         self.mode_label = ttk.Label(self.mode_frame, text="Detection mode:")
         self.mode_label.pack(side="left", padx=10)
-        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual"], state='readonly', width=10)
+        self.mode_combobox = ttk.Combobox(self.mode_frame, values=["manual", ""], state='readonly', width=10)
         self.mode_combobox.pack(side="left")
         self.mode_combobox.bind("<<ComboboxSelected>>", self.laser_mode_widgets)
 
@@ -334,16 +381,39 @@ class PostprocessPage(tk.Frame):
         self.eco_profiler_label = ttk.Label(self.eco_profiler_frame, text="Build ecological profiler export")
         self.eco_profiler_label.pack(pady=10)
 
-        self.eco_laser_dist_label = ttk.Label(self.eco_profiler_frame, text="Distance between lasers in cm:")
-        self.eco_laser_dist_label.pack(side="left", padx=[20, 10], pady=10)
-        self.eco_laser_dist_entry = ttk.Entry(self.eco_profiler_frame, width=8)
-        self.eco_laser_dist_entry.pack(side="left")
+        self.entries_frame = ttk.Frame(self.eco_profiler_frame)
+        self.entries_frame.pack(anchor="w", padx=10, pady=10, fill="x")
+        self.eco_laser_dist_label = ttk.Label(self.entries_frame, text="Distance between lasers in cm:")
+        self.eco_laser_dist_label.pack(side="left", padx=10)
+        self.eco_laser_dist_entry = ttk.Entry(self.entries_frame, width=10)
+        self.eco_laser_dist_entry.pack(side="left", padx=[0, 10])
 
-        self.eco_threshold_label = ttk.Label(self.eco_profiler_frame, text="dy_max to measure annotations (in % of video's height):")
-        self.eco_threshold_label.pack(side="left", padx=[20, 10], pady=10)
-        self.eco_threshold_entry = ttk.Entry(self.eco_profiler_frame, width=8)
+        self.eco_threshold_label = ttk.Label(self.entries_frame, text="dy_max to measure annotations:\n(in % of video's height)")
+        self.eco_threshold_label.pack(side="left", padx=15)
+        self.eco_threshold_entry = ttk.Entry(self.entries_frame, width=10)
         self.eco_threshold_entry.insert(0, '10')
         self.eco_threshold_entry.pack(side="left")
+
+        self.annot_mode_frame = ttk.Frame(self.eco_profiler_frame)
+        self.annot_mode_frame.pack(anchor="w", padx=10, fill="x")
+        self.annot_mode_label = ttk.Label(self.annot_mode_frame, text="Mode used to annotate video:")
+        self.annot_mode_label.pack(side="left", padx=10)
+        self.annot_mode_combobox = ttk.Combobox(self.annot_mode_frame, values=["full", "sampled"], state='readonly', width=10)
+        self.annot_mode_combobox.current(0)
+        self.annot_mode_combobox.pack(side="left")
+        self.annot_mode_combobox.bind("<<ComboboxSelected>>", self.annot_mode_widgets)
+
+        self.sampled_mode_frame = ttk.Frame(self.annot_mode_frame)
+        self.sampled_markers_label = ttk.Label(self.sampled_mode_frame ,text="Labels used to delimit annotation sections:")
+        self.sampled_markers_label.pack(anchor="w", padx=10, pady=5)
+        self.start_marker_label = ttk.Label(self.sampled_mode_frame, text="Start:")
+        self.start_marker_label.pack(side="left", padx=10)
+        self.start_marker_entry = ttk.Entry(self.sampled_mode_frame, width=12)
+        self.start_marker_entry.pack(side="left")
+        self.stop_marker_label = ttk.Label(self.sampled_mode_frame, text="Stop:")
+        self.stop_marker_label.pack(side="left", padx=10)
+        self.stop_marker_entry = ttk.Entry(self.sampled_mode_frame, width=12)
+        self.stop_marker_entry.pack(side="left")
 
         self.eco_profiler_button = ttk.Button(self.eco_profiler_frame, text="Export", command=self.eco_profiler)
         self.eco_profiler_button.pack(side="right", padx=20, pady=20)
@@ -352,21 +422,40 @@ class PostprocessPage(tk.Frame):
         csv_path = self.csv_entry.get()
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
         video_path = preprocessTab.video_entry.get()
+        user_metadata_path = preprocessTab.user_metadata_string.get()
         if video_path:
             video_paths = [video_path]
+            if pl.Path(video_path).suffix != ".mp4":
+                if not messagebox.askyesno("Warning", "Does video filepath {} corresponds to video on which the annotations had been processed (cut video if so) referrenced in annotation file ?".format(video_path)):
+                    video_paths = filedialog.askopenfilenames(title="Select the input video file(s) on which the annotations had been processed", filetypes=[('mp4 files', '*.mp4'), ('avi files', '*.avi')])
+                    if not video_paths:
+                        return
         else:
             video_paths = filedialog.askopenfilenames(title="Select the input video file(s) on which the annotations had been processed", filetypes=[('mp4 files', '*.mp4'), ('avi files', '*.avi')])
+        if not user_metadata_path:
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            preprocessTab.user_metadata_entry.delete(0, "end")
+            preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
         output_path = filedialog.askdirectory(parent=self, title="Save as", mustexist=True)
         if not output_path:
             messagebox.showerror(title="Error", message="Conversion failed, please retry.")
             return
-        scripts.biigle_annot_to_yolo(csv_path, video_paths, output_path)
+        scripts.biigle_annot_to_yolo(csv_path, user_metadata_path, video_paths, output_path)
 
     def laser_mode_widgets(self, event=None):
         mode = self.mode_combobox.get()
         if mode == 'manual':
             self.manual_mode_frame.pack(anchor="w", padx=10)
             self.detect_button["state"] = "normal"
+        elif mode == "":
+            self.manual_mode_frame.pack_forget()
+
+    def annot_mode_widgets(self, event=None):
+        mode = self.annot_mode_combobox.get()
+        if mode == "full":
+            self.sampled_mode_frame.pack_forget()
+        elif mode == "sampled":
+            self.sampled_mode_frame.pack(side="left", padx=10)
 
     def detect_laserpoints(self):
         mode = self.mode_combobox.get()
@@ -395,29 +484,17 @@ class PostprocessPage(tk.Frame):
             csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
         nav_path = preprocessTab.nav_entry.get()
-        if (not nav_path):
-            nav_path = filedialog.askopenfilename(parent=self, title="Select a Pagure navigation file for this dataset", filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
-            if not nav_path:    # user cancelled command
-                return
-        n = pl.Path(nav_path)
-        if not n.exists() or not n.is_file():
-            messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(nav_path))
-            return
+        video_path = preprocessTab.video_entry.get()
+        user_metadata_path = preprocessTab.user_metadata_string.get()
 
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(csv_path).parent, filetypes=[("csv files", "*.csv"), ('text files', '*.txt')])
-        if not output_path or not nav_path:
+        if not output_path: # or not nav_paths:
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
-        start = None
-        if messagebox.askyesno(message="Was the video cut before being annotated ?"):
-            start = scripts.read_time_offset_from_nav(nav_path)
-            lines = ["The program found the following 'FINFIL' marker time in navigation file:", "{}".format(start), "Do you want to use that ?"]
-            if not messagebox.askyesno(title="Use cutting times ?", message="\n".join(lines)):
-                window = entryWindow(self, "Start cutting time", "Enter the start time used to cut video:")
-                self.wait_window(window.top)
-                start = window.value
-                if not start:   # if user cancelled command
-                    return
+        if not user_metadata_path:
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            preprocessTab.user_metadata_entry.delete(0, "end")
+            preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
 
         threshold = self.eco_threshold_entry.get()
         if not threshold:
@@ -427,9 +504,17 @@ class PostprocessPage(tk.Frame):
             if not threshold:   # if user cancelled command
                 return
 
+        start_sample, stop_sample = None, None
+        annot_mode = self.annot_mode_combobox.get()
+        if annot_mode == "sampled":
+            start_sample = self.start_marker_entry.get()
+            stop_sample = self.stop_marker_entry.get()
+            if not start_sample or not stop_sample:
+                messagebox.showerror("Error", "Please provide start and stop markers used in annotation sampling protocol.")
+                return
         if not self.laser_tracks:
             if messagebox.askyesno(title="Info", message="Laserpoints have not been detected yet, do you want to export eco profiler anyway ? (Without size measurement)"):
-                result = scripts.eco_profiler(csv_path, nav_path, threshold, str_timeoffset=start, outPath=output_path)
+                result = scripts.eco_profiler(csv_path, threshold, preprocessTab.entry_cb, user_metadata_path, video_path, nav_path, start_label=start_sample, stop_label=stop_sample, outPath=output_path)
             else:
                 messagebox.showerror("Error", "Export cancelled, please proceed to laser detection first.")
                 return
@@ -448,7 +533,7 @@ class PostprocessPage(tk.Frame):
                 laser_dist = window.value
                 if not laser_dist:   # if user cancelled command
                     return
-            result = scripts.eco_profiler(csv_path, nav_path, threshold, self.laser_tracks, laser_label, laser_dist, start, output_path)
+            result = scripts.eco_profiler(csv_path, threshold, preprocessTab.entry_cb, user_metadata_path, video_path, nav_path, self.laser_tracks, laser_label, laser_dist, start_sample, stop_sample, output_path)
         if result:
             messagebox.showinfo("Success", "Ecological profiler file has been written to {}".format(output_path))
         else:
