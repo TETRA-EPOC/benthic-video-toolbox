@@ -1,10 +1,15 @@
+altgraph==0.17.4
 certifi==2025.1.31
 charset-normalizer==3.4.1
 idna==3.10
-numpy==1.24.4
+importlib-metadata==8.5.0
+numpy~=1.24.4
 opencv-python==4.11.0.86
-pandas==2.0.3
+packaging==24.2
+pandas~=2.0.3
 pillow==10.4.0
+pyinstaller==6.12.0
+pyinstaller-hooks-contrib==2025.2
 pyperclip==1.9.0
 python-dateutil==2.9.0.post0
 python-tkdnd==0.2.1
@@ -16,3 +21,4 @@ ttkwidgets==0.13.0
 tzdata==2025.1
 urllib3==2.2.3
 wslPath==0.4.2
+zipp==3.20.2
