@@ -169,8 +169,8 @@ def convert_nav_to_csv(
     else:
         metadata = create_metadata_file()
     # do not override video filepath if exists (extension may be wrong) but fill if empty, that means video has not been cut
-    if pd.isnull(metadata.iat[0, 0]):
-        metadata.iat[0, 0] = videoName
+    if pd.isnull(metadata.iat[0, 1]) and videoName != metadata.iat[0, 0]:
+        metadata.iat[0, 1] = videoName
     if pd.isnull(metadata.iat[0, 2]) or metadata.iat[0, 2] != navPath:
         metadata.iat[0, 2] = navPath
 
@@ -532,8 +532,8 @@ def biigle_annot_to_yolo(
         metadata = pd.read_csv(mp, index_col=0)
     else:
         metadata = create_metadata_file()
-    if pd.isnull(metadata.iat[0, 0]) and (len(videoPaths) == 1):
-        metadata.iat[0, 0] = videoPaths[0]
+    if pd.isnull(metadata.iat[0, 1]) and (len(videoPaths) == 1):
+        metadata.iat[0, 1] = videoPaths[0]
     metadata.iat[0, 3] = csvPath
 
     annotation_ids, annotation_tracks, contributors = read_data_from_csv(csvPath)
@@ -792,18 +792,18 @@ def eco_profiler(
         return
     metadata.iat[0, 2] = navPath
     metadata.iat[0, 3] = csvPath
-    # if source path not filled in metadata file, try to retrieve it
-    if pd.isnull(metadata.iat[0, 0]) and videoPath:
-        metadata.iat[0, 0] = videoPath
-    # try to get video filename from (in priority order): cut video path in metadata, source video path in metadata, video path in BVT field. If not found ask user.
-    if not pd.isnull(metadata.iat[0, 1]):
+    # if video path is different from source path and cut video path not filled in metadata file, add it in 'cut video file' column
+    if pd.isnull(metadata.iat[0, 1]) and videoPath != metadata.iat[0, 0]:
+        metadata.iat[0, 1] = videoPath
+    # try to get video filename from (in priority order): video path input, cut video path in metadata, source video path in metadata. If not found ask user.
+    if videoPath:
+        metadata_videoname = pl.Path(videoPath).name
+    elif not pd.isnull(metadata.iat[0, 1]):
         metadata_videoname = pl.Path(metadata.iat[0, 1]).name
     elif not pd.isnull(metadata.iat[0, 0]):
         metadata_videoname = pl.Path(metadata.iat[0, 0]).name
-    elif videoPath:
-        metadata_videoname = pl.Path(videoPath).name
     else:
-        metadata_videoname = callback("Could not get source video filepath, please enter (cut) video filename with extension to be associated with this metadata file:")
+        metadata_videoname = callback("Could not get video filename, please enter (cut) video filename with extension to be associated with this metadata file:")
         if not metadata_videoname:
             return
 
