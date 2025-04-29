@@ -644,7 +644,7 @@ def manual_detect_laserpoints(
     laser_tracks = defaultdict(list)
     label_data = data[data["label_name"].str.fullmatch(label, case=False)]
     if label_data.empty:
-        messagebox.showerror("Error", "Could not find label {} in annotation file. Please verify your data.".format(label))
+        messagebox.showerror("Error", "Could not find label '{}' in annotation file. Please verify your data.".format(label))
     for row in label_data.itertuples():
         video_filename = row.video_filename
         track = {}
@@ -669,6 +669,77 @@ def manual_detect_laserpoints(
                 continue
         laser_tracks[video_filename].append(track)
     return laser_tracks
+
+def auto_detect_laserpoints(
+        video_path: str,
+        coco_path: str = None,
+        output: str = None,
+        device: str = None,
+        num_processes: str = None):
+    """Run inference algo on input video file to detect laserpoints and write outputs (video with bboxes and coco file) or takes result coco file and convert detections to laser tracks.
+
+    Python script that takes a video file with laserpoints and either run inference algo from detect_laserpoints.py (based on pretrained mmdet model) or takes coco file with inference results and converts it to laser tracks to buil profiler export.
+    If running algo, writes output video with drawing bboxes on detected lasers and coco.json file with inference results in given directory.
+    Returns a 2D-dictionnary dict(dict), mapping a tuple of laser tracks to a video filename: {'video name': (laser_track_1, laser_track_2), ...}. As there is only one input video, len(dict) = 1.
+    Each laser track is a dict mapping a keyframe to a position in pixels in the image: {'time': coords}
+
+    Args:
+        input (str): Input video file to run inference algo on
+        coco_path (str): Optionnal. Save result of inference algo if it has already run on this video.
+        output (str): Optionnal. Output directory to write inference results
+        device (str): Optionnal. If running inference algo, selected device mode by user (cpu or cuda) to run detection model
+    """
+    from components import detect_laserpoints
+    from pycocotools.coco import COCO
+
+    if not coco_path:
+        try:
+            parser = detect_laserpoints.parse_args()
+            model_path = str(pl.PurePath(pl.Path(__file__).parents[1]).joinpath('assets/epoch_7.pth'))
+            config_path = str(pl.PurePath(pl.Path(__file__).parents[1]).joinpath('assets/ddod_r50SSL.py'))
+            args = parser.parse_args(['--input', video_path, '--model_path', model_path, '--model_config_path', config_path, '--output', output, '--device', device, '--save_video', '--val', '--parallel', num_processes, '--pred_sample_rate=4'])
+        except ValueError as e:
+            print("Error:", e)
+            return
+        detect_laserpoints.main(args)
+
+        coco_path = pl.Path(output).joinpath('coco.json')
+        if not coco_path.exists() or not coco_path.is_file:
+            messagebox.showerror("Error", "Could not find output coco file: {}. Detection proably failed, check output directory.".format(coco_path))
+            return
+
+    cf = COCO(coco_path)
+    track_l1, track_l2 = {}, {}
+    try:
+        for img_id in cf.getImgIds():
+            ann_ids = cf.getAnnIds(float(img_id))
+            if len(ann_ids) != 2:
+                print("Found {} laser points for image n° {}, skip.".format(len(ann_ids), img_id))
+                continue
+            annots = cf.loadAnns(ann_ids)
+            if not 'bbox' in annots[0] or not 'bbox' in annots[1]:
+                print("Error: could not find bboxes of laser annotations for image n° {}, skip.".format(img_id))
+                continue
+            bbox_l1 = annots[0]['bbox']
+            bbox_l2 = annots[1]['bbox']
+            # compute centers of coco bboxes ([xmin, ymin, w, h])
+            pt_l1 = (bbox_l1[0] + bbox_l1[2] / 2, bbox_l1[1] + bbox_l1[3] / 2)
+            pt_l2 = (bbox_l2[0] + bbox_l2[2] / 2, bbox_l2[1] + bbox_l2[3] / 2)
+            # get keytime corresponding to img_id
+            if not 'keytime' in annots[0] or not 'keytime' in annots[1]:
+                print("Error: could not find keytime for image n° {}, skip.".format(img_id))
+                continue
+            kf_l1 = annots[0]['keytime']
+            kf_l2 = annots[1]['keytime']
+
+            track_l1.update({kf_l1: pt_l1})
+            track_l2.update({kf_l2: pt_l2})
+        video_name = pl.Path(video_path).name
+        laser_tracks = {video_name: [track_l1, track_l2]}
+        return laser_tracks
+    except ValueError as e:
+        print("error:", e)
+        return
 
 def eco_profiler(
         csvPath: str,
@@ -720,6 +791,12 @@ def eco_profiler(
     import math
 
     def measure_annot_size(annot_coords, annot_shape_id):
+        '''Measure size of annotation in pixel depending on annotation shape
+
+        :param annot_coords (list of float): List of image coordinates of annotation
+        :param annot_shape_id (int): Id of the annotation shape type (see biigle annotation reports doc)
+        :return a size measurement (length) in pixels, see code for metrics chosen depending on shape type
+        '''
         # point annotation, skip size measurement
         if annot_shape_id == 1:
             pass
