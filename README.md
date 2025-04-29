@@ -15,3 +15,26 @@ There are three main objectives to video annotations post-processing:
   - Conversion of a Biigle video annotation file to YOLO formatted files in order to buid the annotated images database
   - Adding GPS coordinates (latitude and longitude) to Biigle's video annotation file
 
+
+# Installation
+
+Clone this repository to your local environment, create a python virtual environment and activate it:
+  `python -m venv .bvt`
+  `source .bvt/bin/activate`
+Or, on windows:
+  `python -m venv .bvt`
+  `.\.bvt\Scripts\activate`
+
+Then all dependencies with `requirements.txt` file:
+  `pip install -r requirements.txt`
+
+Warning: some library versions may cause code issues or conflicts. To avoid that use versions listed in requirements file, however if you have to install newer versions, note that you need:
+- numpy<=1.26.4
+
+# Bundle exe application with pyinstaller
+
+On windows, go to your repo folder and run:
+  `pyinstaller -w -F --path ".bvt\Lib\site-packages" --icon "assets\icon2.ico" --add-data=".bvt\Lib\site-packages\tkinterDnD":. .\BenthicVideoToolbox.py`
+
+On linux:
+  `pyinstaller -w -F --add-data=".env/lib/python3.8/site-packages/tkinterDnD/linux":. BenthicVideoToolbox.py`
