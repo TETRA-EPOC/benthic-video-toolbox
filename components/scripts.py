@@ -942,8 +942,9 @@ def eco_profiler(
         else:
             start_cut_abs = nav_times.iat[0]
             stop_cut_abs = nav_times.iat[-1]
-        if metadata_videoname == videoname and metadata.iat[0,4] != t0_abs:
-            metadata.iat[0,4] = t0_abs
+        if metadata_videoname == videoname:
+            if metadata.iat[0,4] != t0_abs:
+                metadata.iat[0,4] = t0_abs
 
             distances = []
             dist_mask = data_nav.columns.str.startswith(('Dist', 'dist', 'DIST'))
