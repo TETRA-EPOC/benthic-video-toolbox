@@ -281,7 +281,7 @@ def convert_nav_to_csv(
 
         with open(outFilepath, "rb") as f:
             try:
-                api.post('volumes/{}/metadata'.format(volumeId), files={'file': f }, data={ 'parser': 'Biigle\Services\MetadataParsing\VideoCsvParser' })
+                api.post('volumes/{}/metadata'.format(volumeId), files={'file': f }, data={ 'parser': r'Biigle\Services\MetadataParsing\VideoCsvParser' })
             except requests.exceptions.RequestException as e:
                 messagebox.showerror(title="Error: ", message=e)
                 raise Exception(e)
