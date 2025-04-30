@@ -16,9 +16,13 @@ There are three main objectives to video annotations post-processing:
   - Adding GPS coordinates (latitude and longitude) to Biigle's video annotation file
 
 
-# Installation
+# Install BenthicVideoToolbox repo based on laser-auto-detection branch
 
-Clone this repository to your local environment, create a python virtual environment and activate it:
+Before cloning this branch, you need to download and install git lfs in order to download large file (here epoch_7.pth needed to run inference model):
+- Download https://git-lfs.com/ and run installation exe
+- Open a terminal and run `git lfs install`
+
+Clone this repository (auto-laser-detection branch) to your local environment, create a python virtual environment and activate it:
   `python -m venv .bvt`
   `source .bvt/bin/activate`
 Or, on windows:
@@ -32,6 +36,38 @@ Then all dependencies with `requirements.txt` file:
 
 Warning: some library versions may cause code issues or conflicts. To avoid that use versions listed in requirements file, however if you have to install newer versions, note that you need:
 - numpy<=1.26.4
+- opencv-python<=4.10.0.84
+
+# mmdet installation notes (from https://mmdetection.readthedocs.io/):
+
+1. Install PyTorch 2.1.2 (newest versions need mmcv2.2 which is incompatible with current version of mmdet), adapt to your cuda toolkit version (you may need to download an older version of cuda toolkit compatible with pytorch 2.1.2)
+with GPU:
+    pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cu121
+Check installation:
+    python -c "import torch;print(torch.__version__, torch.cuda.is_available())"
+
+OR CPU only:
+    pip install torch==2.1.2 torchvision==0.16.2 torchaudio==2.1.2 --index-url https://download.pytorch.org/whl/cpu
+Check installation:
+    python -c "import torch;print(torch.__version__)"
+
+2. Install mmengine and mmcv:
+    <!-- pip install -U openmim -->
+    mim install mmengine
+    mim install mmcv==2.1.0
+    
+3. Install mmdet:
+        mim install mmdet==3.3.0
+    OR Install mmdet from source:
+        git clone https://github.com/open-mmlab/mmdetection.git
+        cd mmdetection
+        pip install -v -e .
+    Check installation with:
+        mim download mmdet --config rtmdet_tiny_8xb32-300e_coco --dest .
+        python demo/image_demo.py demo/demo.jpg rtmdet_tiny_8xb32-300e_coco.py --weights rtmdet_tiny_8xb32-300e_coco_20220902_112414-78e30dcc.pth --device cuda (or cpu if cpu install)
+
+Note: If an error of type "cannot import name 'six' from 'pkg_resources.extern'" appears during mmengine, mmcv or mmdet installation, try upgrading pip (python -m pip install --upgrade pip) and re-try
+
 
 # Bundle exe application with pyinstaller
 
