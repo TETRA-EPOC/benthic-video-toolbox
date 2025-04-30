@@ -232,7 +232,7 @@ class PreprocessPage(tk.Frame):
         self.user_metadata_path = None
         self.user_metadata_frame = ttk.Frame(self)
         self.user_metadata_frame.pack(side="bottom", padx=10, pady=20, fill="x")
-        self.user_metadata_label = ttk.Label(self.user_metadata_frame, text="BVT metadata path:")
+        self.user_metadata_label = ttk.Label(self.user_metadata_frame, text="BVT metadata file:")
         self.user_metadata_label.pack(side="left", padx=2)
         if 'tkinterDnD' in sys.modules:
             self.user_metadata_entry = ttk.Entry(self.user_metadata_frame, ondrop=lambda event: drop(self.user_metadata_string, event), text=self.user_metadata_string)
@@ -267,7 +267,7 @@ class PreprocessPage(tk.Frame):
         if not p.exists() or not p.is_file():
             messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(self.video_path))
         if not self.user_metadata_path:
-            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             self.user_metadata_entry.delete(0, "end")
             self.user_metadata_entry.insert(0, self.user_metadata_path)
         if (not self.nav_path or len(self.nav_path) == 0):
@@ -317,7 +317,7 @@ class PreprocessPage(tk.Frame):
             if not self.nav_path:   # if user cancelled command
                 return
         if not self.user_metadata_path:
-            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             self.user_metadata_entry.delete(0, "end")
             self.user_metadata_entry.insert(0, self.user_metadata_path)
         apiTab = app.tabControl.nametowidget(app.tabControl.tabs()[2])
@@ -479,7 +479,7 @@ class PostprocessPage(tk.Frame):
         else:
             video_paths = [video_path]
         if not user_metadata_path:
-            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             preprocessTab.user_metadata_entry.delete(0, "end")
             preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
         output_path = filedialog.askdirectory(parent=self, title="Save as", mustexist=True)
@@ -549,7 +549,7 @@ class PostprocessPage(tk.Frame):
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
         if not user_metadata_path:
-            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             preprocessTab.user_metadata_entry.delete(0, "end")
             preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
 
