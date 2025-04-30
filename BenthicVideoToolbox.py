@@ -1,4 +1,5 @@
 import sys
+import re
 import components.scripts as scripts
 import platform
 import pathlib as pl
@@ -55,14 +56,28 @@ def convert_path(path):
             path = path[:-1]
     if(platform.system() == "Linux" and wslPath.is_windows_path(path)):
         path = wslPath.to_posix(path)
-    elif(platform.system() == "Windows" and wslPath.is_posix_path(path)):
-        path = wslPath.to_windows(path)
+    elif(platform.system() == "Windows"):
+        if bool(re.match(r"^[A-Za-z]:/", path)):
+            path = path.replace("/", "\\")
+        elif wslPath.is_posix_path(path):
+            path = wslPath.to_windows(path)
     return path
 
 def get_video_path(page, event=None):
     page.video_path = convert_path(page.video_entry.get())
     page.video_entry.delete(0, "end")
     page.video_entry.insert('end', page.video_path)
+
+def get_cut_video_path(page, event=None):
+    page.cut_video_path = convert_path(page.cut_video_entry.get())
+    page.cut_video_entry.delete(0, "end")
+    page.cut_video_entry.insert('end', page.cut_video_path)
+
+def update_path(path, entry, event=None):
+    path = convert_path(path)
+    entry.delete(0, "end")
+    entry.insert('end', path)
+    return path
 
 def get_nav_path(page, event=None):
     page.nav_path = convert_path(page.nav_entry.get())
@@ -135,7 +150,7 @@ class PreprocessPage(tk.Frame):
         self.video_path = None
         self.video_entry_frame = ttk.Frame(self)
         self.video_entry_frame.pack(padx=10, pady=10, fill="x")
-        self.video_entry_label = ttk.Label(self.video_entry_frame, text="Video file path:")
+        self.video_entry_label = ttk.Label(self.video_entry_frame, text="Source video file:")
         self.video_entry_label.pack(side="left", padx=2)
         if 'tkinterDnD' in sys.modules:
             self.video_entry = ttk.Entry(self.video_entry_frame, ondrop=lambda event: drop(self.video_string, event), text=self.video_string)
@@ -143,12 +158,26 @@ class PreprocessPage(tk.Frame):
             self.video_entry = ttk.Entry(self.video_entry_frame, text=self.video_string)
         self.video_entry.pack(fill="x", padx=2)
         if 'wslPath' in sys.modules:
-            self.video_entry.bind("<FocusOut>", lambda event: get_video_path(self))
+            self.video_entry.bind("<FocusOut>", lambda event: update_path(self.video_entry.get(), self.video_entry))
+
+        self.cut_video_string = tk.StringVar()
+        self.cut_video_path = None
+        self.cut_video_entry_frame = ttk.Frame(self)
+        self.cut_video_entry_frame.pack(padx=10, pady=10, fill="x")
+        self.cut_video_entry_label = ttk.Label(self.cut_video_entry_frame, text="Cut video file:")
+        self.cut_video_entry_label.pack(side="left", padx=2)
+        if 'tkinterDnD' in sys.modules:
+            self.cut_video_entry = ttk.Entry(self.cut_video_entry_frame, ondrop=lambda event: drop(self.cut_video_string, event), text=self.cut_video_string)
+        else:
+            self.cut_video_entry = ttk.Entry(self.cut_video_entry_frame, text=self.cut_video_string)
+        self.cut_video_entry.pack(fill="x", padx=2)
+        if 'wslPath' in sys.modules:
+            self.cut_video_entry.bind("<FocusOut>", lambda event: update_path(self.cut_video_entry.get(), self.cut_video_entry))
 
         self.nav_string = tk.StringVar()
         self.nav_entry_frame = ttk.Frame(self)
         self.nav_entry_frame.pack(fill="x", padx=10, pady=10) #expand=True,
-        self.nav_entry_label = ttk.Label(self.nav_entry_frame, text="Nav. file path:")
+        self.nav_entry_label = ttk.Label(self.nav_entry_frame, text="Navigation file:")
         self.nav_entry_label.pack(side="left", padx=2)
         if 'tkinterDnD' in sys.modules:
             self.nav_entry = ttk.Entry(self.nav_entry_frame, ondrop=lambda event: drop(self.nav_string, event), text=self.nav_string)
@@ -156,7 +185,7 @@ class PreprocessPage(tk.Frame):
             self.nav_entry = ttk.Entry(self.nav_entry_frame, text=self.nav_string)
         self.nav_entry.pack(fill="x", padx=2)
         if 'wslPath' in sys.modules:
-            self.nav_entry.bind("<FocusOut>", lambda event: get_nav_path(self))
+            self.nav_entry.bind("<FocusOut>", lambda event: update_path(self.nav_entry.get(), self.nav_entry))
 
         # cut video section
         self.cut_frame = ttk.Frame(self)
@@ -207,7 +236,7 @@ class PreprocessPage(tk.Frame):
         self.user_metadata_path = None
         self.user_metadata_frame = ttk.Frame(self)
         self.user_metadata_frame.pack(side="bottom", padx=10, pady=20, fill="x")
-        self.user_metadata_label = ttk.Label(self.user_metadata_frame, text="User metadata path:")
+        self.user_metadata_label = ttk.Label(self.user_metadata_frame, text="BVT metadata file:")
         self.user_metadata_label.pack(side="left", padx=2)
         if 'tkinterDnD' in sys.modules:
             self.user_metadata_entry = ttk.Entry(self.user_metadata_frame, ondrop=lambda event: drop(self.user_metadata_string, event), text=self.user_metadata_string)
@@ -215,7 +244,7 @@ class PreprocessPage(tk.Frame):
             self.user_metadata_entry = ttk.Entry(self.user_metadata_frame, text=self.user_metadata_string)
         self.user_metadata_entry.pack(fill="x", padx=2)
         if 'wslPath' in sys.modules:
-            self.user_metadata_entry.bind("<FocusOut>", lambda event: get_user_metadata_path(self))
+            self.user_metadata_entry.bind("<FocusOut>", lambda event: update_path(self.user_metadata_entry.get(), self.user_metadata_entry))
 
     def remove_example_cb(self, entry, event=None):
         if str(entry.cget("foreground")) == "#A9A9A9":
@@ -242,7 +271,7 @@ class PreprocessPage(tk.Frame):
         if not p.exists() or not p.is_file():
             messagebox.showerror("Error", "{} is not a regular file. Please provide a valid file path.".format(self.video_path))
         if not self.user_metadata_path:
-            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             self.user_metadata_entry.delete(0, "end")
             self.user_metadata_entry.insert(0, self.user_metadata_path)
         if (not self.nav_path or len(self.nav_path) == 0):
@@ -276,6 +305,7 @@ class PreprocessPage(tk.Frame):
             self.cut_to_entry.insert(0, end)
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", filetypes=[('mp4 videos', '*.mp4'), ('avi videos', '*.avi'), ('mpeg videos', '*.mpeg'),
                                                     ('quicktime videos', '*.mov'), ('all files', '*')], defaultextension='.mp4')
+        output_path = update_path(output_path, self.cut_video_entry)
         result = scripts.cut_command(self.video_path, start, end, output_path, self.user_metadata_path)
         if result == 0:
             messagebox.showinfo("Success", "Video {} has been successfully cut and has been saved to {}".format(p.name, output_path))
@@ -283,7 +313,7 @@ class PreprocessPage(tk.Frame):
             messagebox.showerror("Error", "Operation failed, please retry.")
 
     def convert_nav_to_csv(self):
-        self.video_path = self.video_string.get()
+        video_path = self.cut_video_string.get()
         self.nav_path = self.nav_entry.get()
         self.user_metadata_path = self.user_metadata_string.get()
         if not self.nav_path:
@@ -291,7 +321,7 @@ class PreprocessPage(tk.Frame):
             if not self.nav_path:   # if user cancelled command
                 return
         if not self.user_metadata_path:
-            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            self.user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             self.user_metadata_entry.delete(0, "end")
             self.user_metadata_entry.insert(0, self.user_metadata_path)
         apiTab = app.tabControl.nametowidget(app.tabControl.tabs()[2])
@@ -301,13 +331,18 @@ class PreprocessPage(tk.Frame):
         if self.volume_id_entry.get() and (not email or not token):
             messagebox.showerror(title="Error: ", message="To connect to Biigle API, please fill in the login details inside 'Biigle API Login' tab.")
             return
-        if not self.video_path:
-            window = entryWindow(self, "Video name", "Enter the video (cut if so) full path associated with this navigation file:")
-            self.wait_window(window.top)
-            self.video_path = window.value
-            if not self.video_path:   # if user cancelled command
+        if not video_path:
+            source = self.video_entry.get()
+            videoname = pl.Path(source).name
+            if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+                window = entryWindow(self, "Video name", "Enter the (cut) video full path associated to this navigation file:")
+                self.wait_window(window.top)
+                video_path = update_path(window.value, self.cut_video_entry)
+            else:
+                video_path = source
+            if not video_path:
                 return
-        s = pl.Path(self.video_path).suffix
+        s = pl.Path(video_path).suffix
         if s and s != ".mp4":
             if not messagebox.askyesno("Warning", "Video extension is {}, is it the same as the file loaded on Biigle ? (Note that cut movies are converted to .mp4)".format(s)):
                 w = entryWindow(self, "Video extension", "Enter the video extension of the uploaded file on Biigle:")
@@ -316,14 +351,14 @@ class PreprocessPage(tk.Frame):
                 if not s:
                     return
                 try:
-                    self.video_path = pl.Path(self.video_path).with_suffix(s)
+                    video_path = pl.Path(video_path).with_suffix(s)
                 except ValueError as e:
                     messagebox.showerror("Error", e)
                     return
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(self.nav_path).parent, filetypes=[('csv files', '*.csv'), ('all files', '*')], defaultextension='.csv')
         if not output_path:
             return
-        result = scripts.convert_nav_to_csv(self.nav_path, self.video_path, self.entry_cb, self.user_metadata_path, output_path, True, volume_id, email, token)
+        result = scripts.convert_nav_to_csv(self.nav_path, video_path, self.entry_cb, self.user_metadata_path, output_path, True, volume_id, email, token)
         if result:
             messagebox.showinfo("Success", "Metadata file has been written to {}".format(output_path))
         else:
@@ -340,7 +375,7 @@ class PostprocessPage(tk.Frame):
         self.csv_string = tk.StringVar()
         self.csv_entry_frame = ttk.Frame(self)
         self.csv_entry_frame.pack(fill="x", padx=10, pady=10)
-        self.csv_entry_label = ttk.Label(self.csv_entry_frame, text="Biigle video annotation file path:")
+        self.csv_entry_label = ttk.Label(self.csv_entry_frame, text="Biigle video annotation file:")
         self.csv_entry_label.pack(side="left", padx=2)
         if 'tkinterDnD' in sys.modules:
             self.csv_entry = ttk.Entry(self.csv_entry_frame, ondrop=lambda event: drop(self.csv_string, event), text=self.csv_string)
@@ -350,11 +385,11 @@ class PostprocessPage(tk.Frame):
         self.csv_entry.bind("<FocusOut>", lambda event: get_csv_path(self))
 
         self.biigle_to_yolo_frame = ttk.Frame(self)
-        self.biigle_to_yolo_frame.pack(padx=10, pady=10, fill="x")
+        self.biigle_to_yolo_frame.pack(anchor="e", padx=10, pady=10)
         self.biigle_to_yolo_label = ttk.Label(self.biigle_to_yolo_frame, text="Convert Biigle video annotation file to YOLO-formatted images annotations files:")
-        self.biigle_to_yolo_label.pack(anchor="w", side="left")
+        self.biigle_to_yolo_label.pack(side="left")
         self.biigle_to_yolo_button = ttk.Button(self.biigle_to_yolo_frame, text="Convert", command=self.biigle_to_yolo)
-        self.biigle_to_yolo_button.pack(anchor="e", padx=20)
+        self.biigle_to_yolo_button.pack(padx=20)
 
         # detect laserpoints section
         self.laser_tracks = None
@@ -448,19 +483,29 @@ class PostprocessPage(tk.Frame):
     def biigle_to_yolo(self):
         csv_path = self.csv_entry.get()
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
-        video_path = preprocessTab.video_entry.get()
+        video_path = preprocessTab.cut_video_string.get()
         user_metadata_path = preprocessTab.user_metadata_string.get()
-        if video_path:
-            video_paths = [video_path]
-            if pl.Path(video_path).suffix != ".mp4":
-                if not messagebox.askyesno("Warning", "Does video filepath {} corresponds to video on which the annotations had been processed (cut video if so) referrenced in annotation file ?".format(video_path)):
-                    video_paths = filedialog.askopenfilenames(title="Select the input video file(s) on which the annotations had been processed", filetypes=[('mp4 files', '*.mp4'), ('avi files', '*.avi')])
-                    if not video_paths:
-                        return
-        else:
+        if not video_path:
+            source = preprocessTab.video_entry.get()
+            if source:
+                videoname = pl.Path(source).name
+                if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+                    window = entryWindow(self, "Video name", "Enter the (cut) video full path associated to this annotation file:")
+                    self.wait_window(window.top)
+                    video_path = update_path(window.value, preprocessTab.cut_video_entry)
+                else:
+                    video_path = source
+        if pl.Path(video_path).suffix != ".mp4":
+            if not messagebox.askyesno("Warning", "Does video filepath {} corresponds to video on which the annotations had been processed (cut video if so) referrenced in annotation file ?".format(video_path)):
+                video_paths = filedialog.askopenfilenames(title="Select the input video file(s) on which the annotations had been processed", filetypes=[('mp4 files', '*.mp4'), ('avi files', '*.avi')])
+        if not video_path:
             video_paths = filedialog.askopenfilenames(title="Select the input video file(s) on which the annotations had been processed", filetypes=[('mp4 files', '*.mp4'), ('avi files', '*.avi')])
+            if not video_paths:
+                return
+        else:
+            video_paths = [video_path]
         if not user_metadata_path:
-            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             preprocessTab.user_metadata_entry.delete(0, "end")
             preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
         output_path = filedialog.askdirectory(parent=self, title="Save as", mustexist=True)
@@ -543,15 +588,26 @@ class PostprocessPage(tk.Frame):
             csv_path = filedialog.askopenfilename(title="Select a CSV video annotation file for this dataset", filetypes=[("csv files", "*.csv")])
         preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
         nav_path = preprocessTab.nav_entry.get()
-        video_path = preprocessTab.video_entry.get()
+        video_path = preprocessTab.cut_video_string.get()
         user_metadata_path = preprocessTab.user_metadata_string.get()
+        # if cut video file not filled try to get source video file
+        if not video_path:
+            source = preprocessTab.video_entry.get()
+            if source:
+                videoname = pl.Path(source).name
+                if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+                    window = entryWindow(self, "Video name", "Enter the (cut) video full path associated to this annotation file:")
+                    self.wait_window(window.top)
+                    video_path = update_path(window.value, preprocessTab.cut_video_entry)
+                else:
+                    video_path = source
 
         output_path = filedialog.asksaveasfilename(parent=self, title="Save as", initialdir=pl.Path(csv_path).parent, filetypes=[("csv files", "*.csv"), ('text files', '*.txt')])
         if not output_path: # or not nav_paths:
             messagebox.showerror(title="Error", message="Operation failed, please retry.")
             return
         if not user_metadata_path:
-            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata filepath", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
+            user_metadata_path = filedialog.asksaveasfilename(parent=self, title="Select or create BVT metadata file", filetypes=[('csv files', '*.csv'), ('text files', '*.txt')], defaultextension='.csv')
             preprocessTab.user_metadata_entry.delete(0, "end")
             preprocessTab.user_metadata_entry.insert(0, user_metadata_path)
 

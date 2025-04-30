@@ -169,8 +169,8 @@ def convert_nav_to_csv(
     else:
         metadata = create_metadata_file()
     # do not override video filepath if exists (extension may be wrong) but fill if empty, that means video has not been cut
-    if pd.isnull(metadata.iat[0, 0]):
-        metadata.iat[0, 0] = videoName
+    if pd.isnull(metadata.iat[0, 1]) and videoName != metadata.iat[0, 0]:
+        metadata.iat[0, 1] = videoName
     if pd.isnull(metadata.iat[0, 2]) or metadata.iat[0, 2] != navPath:
         metadata.iat[0, 2] = navPath
 
@@ -281,7 +281,7 @@ def convert_nav_to_csv(
 
         with open(outFilepath, "rb") as f:
             try:
-                api.post('volumes/{}/metadata'.format(volumeId), files={'file': f }, data={ 'parser': 'Biigle\Services\MetadataParsing\VideoCsvParser' })
+                api.post('volumes/{}/metadata'.format(volumeId), files={'file': f }, data={ 'parser': r'Biigle\Services\MetadataParsing\VideoCsvParser' })
             except requests.exceptions.RequestException as e:
                 messagebox.showerror(title="Error: ", message=e)
                 raise Exception(e)
@@ -532,8 +532,8 @@ def biigle_annot_to_yolo(
         metadata = pd.read_csv(mp, index_col=0)
     else:
         metadata = create_metadata_file()
-    if pd.isnull(metadata.iat[0, 0]) and (len(videoPaths) == 1):
-        metadata.iat[0, 0] = videoPaths[0]
+    if pd.isnull(metadata.iat[0, 1]) and (len(videoPaths) == 1):
+        metadata.iat[0, 1] = videoPaths[0]
     metadata.iat[0, 3] = csvPath
 
     annotation_ids, annotation_tracks, contributors = read_data_from_csv(csvPath)
@@ -644,7 +644,7 @@ def manual_detect_laserpoints(
     laser_tracks = defaultdict(list)
     label_data = data[data["label_name"].str.fullmatch(label, case=False)]
     if label_data.empty:
-        messagebox.showerror("Error", "Could not find label '{}' in annotation file. Please verify your data.".format(label))
+        messagebox.showerror("Error", "Could not find label {} in annotation file. Please verify your data.".format(label))
     for row in label_data.itertuples():
         video_filename = row.video_filename
         track = {}
@@ -799,7 +799,7 @@ def eco_profiler(
         '''
         # point annotation, skip size measurement
         if annot_shape_id == 1:
-            pass
+            return
         # for circles we take diameter (2 * third coordinate) as size
         elif annot_shape_id == 4:
             annot_size_px = 2*annot_coords[2]
@@ -817,7 +817,7 @@ def eco_profiler(
             annot_size_px = math.dist(pt1, pt2)
         else:
             messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(annot_shape_id))
-            pass
+            return
         return annot_size_px
 
     # function that takes nav_times and distances pd.Series from nav file and compute covered distance between start and stop cut times
@@ -869,18 +869,18 @@ def eco_profiler(
         return
     metadata.iat[0, 2] = navPath
     metadata.iat[0, 3] = csvPath
-    # if source path not filled in metadata file, try to retrieve it
-    if pd.isnull(metadata.iat[0, 0]) and videoPath:
-        metadata.iat[0, 0] = videoPath
-    # try to get video filename from (in priority order): cut video path in metadata, source video path in metadata, video path in BVT field. If not found ask user.
-    if not pd.isnull(metadata.iat[0, 1]):
+    # if video path is different from source path and cut video path not filled in metadata file, add it in 'cut video file' column
+    if pd.isnull(metadata.iat[0, 1]) and videoPath != metadata.iat[0, 0]:
+        metadata.iat[0, 1] = videoPath
+    # try to get video filename from (in priority order): video path input, cut video path in metadata, source video path in metadata. If not found ask user.
+    if videoPath:
+        metadata_videoname = pl.Path(videoPath).name
+    elif not pd.isnull(metadata.iat[0, 1]):
         metadata_videoname = pl.Path(metadata.iat[0, 1]).name
     elif not pd.isnull(metadata.iat[0, 0]):
         metadata_videoname = pl.Path(metadata.iat[0, 0]).name
-    elif videoPath:
-        metadata_videoname = pl.Path(videoPath).name
     else:
-        metadata_videoname = callback("Could not get source video filepath, please enter (cut) video filename with extension to be associated with this metadata file:")
+        metadata_videoname = callback("Could not get video filename, please enter (cut) video filename with extension to be associated with this metadata file:")
         if not metadata_videoname:
             return
 
@@ -954,154 +954,159 @@ def eco_profiler(
                             continue
                         laser_pairs[pos_start].append(track)
                     laser_tracks[videoname] = laser_pairs
-        if len(video_filenames) > 1 or not navPath:
-            nav_path = filedialog.askopenfilename(title="Select navigation file for input video {}".format(videoname), filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
+        if not navPath:
+            if not messagebox.askyesno(message="No navigation file provided, do you want to proceed without ? (No distance measure and GPS location)".format(videoname)):
+                nav_path = filedialog.askopenfilename(title="Select navigation file for input video {}".format(videoname), filetypes=[('all', '*'), ('text files', '*.txt'), ('csv files', '*.csv')])
+            else:
+                nav_path = None
         else:
             nav_path = navPath
         laser_dist = float(laser_dist_str) if laser_dist_str else None
-        data_nav = pd.read_table(nav_path)
-        nav_days = pd.to_datetime(data_nav["DATE"], dayfirst=True)
-        nav_times = pd.to_timedelta(data_nav["HEURE"])
-        if "LAT_PAGURE" and "LONG_PAGURE" in data_nav.columns:
-            latitudes = data_nav["LAT_PAGURE"]
-            longitudes = data_nav["LONG_PAGURE"]
-        else:
-            lat_mask = data_nav.columns.str.startswith(('lat', 'LAT', 'Lat'))
-            lon_mask = data_nav.columns.str.startswith(('lon', 'LON', 'Lon', 'lng'))
-            # get first ids of masks (numpy arrays whith boolean values) meeting regex conditions
-            lat_idx = np.where(lat_mask == True)[0][0]
-            lon_idx = np.where(lon_mask == True)[0][0]
-            latitudes = data_nav.iloc[:,lat_idx]
-            longitudes = data_nav.iloc[:,lon_idx]
-
-        t0_abs = nav_times.iat[0]
-        start_cut_abs, stop_cut_abs, start_rel, stop_rel = None, None, None, None
-        if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
-            if metadata_videoname == videoname and not metadata.iloc[0,4:9].isna().any():
-                t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = metadata.iloc[0,4:9]
+        if nav_path:
+            data_nav = pd.read_table(nav_path)
+            nav_days = pd.to_datetime(data_nav["DATE"], dayfirst=True)
+            nav_times = pd.to_timedelta(data_nav["HEURE"])
+            if "LAT_PAGURE" and "LONG_PAGURE" in data_nav.columns:
+                latitudes = data_nav["LAT_PAGURE"]
+                longitudes = data_nav["LONG_PAGURE"]
             else:
-                t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = read_cut_times_from_nav(nav_path)
-            lines = ["The program found the following 'start cut time':", "{} (relative time) corresponding to {} absolute timestamp".format(start_rel, start_cut_abs), "Is it correct ?"]
-            if not messagebox.askyesno(title="Use cut times ?", message="\n".join(lines)):
-                if callback:
-                    start_offset = callback("Enter the 'start cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
-                    stop_offset = callback("Enter the 'stop cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
-                    if not start_offset or not stop_offset:     # user cancelled command
-                        return
+                lat_mask = data_nav.columns.str.startswith(('lat', 'LAT', 'Lat'))
+                lon_mask = data_nav.columns.str.startswith(('lon', 'LON', 'Lon', 'lng'))
+                # get first ids of masks (numpy arrays whith boolean values) meeting regex conditions
+                lat_idx = np.where(lat_mask == True)[0][0]
+                lon_idx = np.where(lon_mask == True)[0][0]
+                latitudes = data_nav.iloc[:,lat_idx]
+                longitudes = data_nav.iloc[:,lon_idx]
+
+            t0_abs = nav_times.iat[0]
+            start_cut_abs, stop_cut_abs, start_rel, stop_rel = None, None, None, None
+            if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+                if metadata_videoname == videoname and not metadata.iloc[0,4:9].isna().any():
+                    t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = metadata.iloc[0,4:9]
+                else:
+                    t0_abs, start_rel, stop_rel, start_cut_abs, stop_cut_abs = read_cut_times_from_nav(nav_path)
+                lines = ["The program found the following 'start cut time':", "{} (relative time) corresponding to {} absolute timestamp".format(start_rel, start_cut_abs), "Is it correct ?"]
+                if not messagebox.askyesno(title="Use cut times ?", message="\n".join(lines)):
+                    if callback:
+                        start_offset = callback("Enter the 'start cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                        stop_offset = callback("Enter the 'stop cut time' used to cut video (relative, hh:mm:ss or number of seconds):")
+                        if not start_offset or not stop_offset:     # user cancelled command
+                            return
+                        try:
+                            start_rel = format_time(start_offset)
+                            stop_rel = format_time(stop_offset)
+                            start_cut_abs = pd.to_timedelta(t0_abs) + start_rel
+                            stop_cut_abs = pd.to_timedelta(t0_abs) + stop_rel
+                        except ValueError as e:
+                            print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
+                else:
                     try:
-                        start_rel = format_time(start_offset)
-                        stop_rel = format_time(stop_offset)
-                        start_cut_abs = pd.to_timedelta(t0_abs) + start_rel
-                        stop_cut_abs = pd.to_timedelta(t0_abs) + stop_rel
+                        start_cut_abs = pd.to_timedelta(start_cut_abs)
+                        stop_cut_abs = pd.to_timedelta(stop_cut_abs)
                     except ValueError as e:
                         print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
+                # if cut times out of bounds
+                if start_cut_abs < nav_times.iat[0]:
+                    start_cut_abs = nav_times.iat[0]
+                    start_rel = timedelta(0)
+                if stop_cut_abs > nav_times.iat[-1]:
+                    stop_cut_abs = nav_times.iat[-1]
+                    stop_rel = nav_times.iat[-1] - nav_times.iat[0]
+                # update eventually metadata file
+                if metadata_videoname == videoname and metadata.iloc[0,5:9].isna().any():
+                    # remove 'o days' added with timedelta conversion
+                    start_rel = str(start_rel).split(' ')[-1]
+                    stop_rel = str(stop_rel).split(' ')[-1]
+                    start_cut_abs_string = str(start_cut_abs).split(' ')[-1]
+                    stop_cut_abs_string = str(stop_cut_abs).split(' ')[-1]
+                    metadata.iloc[0,5:9] = start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
             else:
-                try:
-                    start_cut_abs = pd.to_timedelta(start_cut_abs)
-                    stop_cut_abs = pd.to_timedelta(stop_cut_abs)
-                except ValueError as e:
-                    print("error: failed to convert string times {} and {} to timedelta".format(start_offset, stop_offset), e)
-            # if cut times out of bounds
-            if start_cut_abs < nav_times.iat[0]:
                 start_cut_abs = nav_times.iat[0]
-                start_rel = timedelta(0)
-            if stop_cut_abs > nav_times.iat[-1]:
                 stop_cut_abs = nav_times.iat[-1]
-                stop_rel = nav_times.iat[-1] - nav_times.iat[0]
-            # update eventually metadata file
-            if metadata_videoname == videoname and metadata.iloc[0,5:9].isna().any():
-                # remove 'o days' added with timedelta conversion
-                start_rel = str(start_rel).split(' ')[-1]
-                stop_rel = str(stop_rel).split(' ')[-1]
-                start_cut_abs_string = str(start_cut_abs).split(' ')[-1]
-                stop_cut_abs_string = str(stop_cut_abs).split(' ')[-1]
-                metadata.iloc[0,5:9] = start_rel, stop_rel, start_cut_abs_string, stop_cut_abs_string
-        else:
-            start_cut_abs = nav_times.iat[0]
-            stop_cut_abs = nav_times.iat[-1]
-        if metadata_videoname == videoname and metadata.iat[0,4] != t0_abs:
-            metadata.iat[0,4] = t0_abs
+            if metadata_videoname == videoname:
+                if metadata.iat[0,4] != t0_abs:
+                    metadata.iat[0,4] = t0_abs
 
-            distances = []
-            dist_mask = data_nav.columns.str.startswith(('Dist', 'dist', 'DIST'))
-            dist_idx = np.where(dist_mask == True)[0][0]
-            distances = pd.to_numeric(data_nav.iloc[:, dist_idx])
-            if len(distances) > 0 and start_cut_abs and stop_cut_abs:
-                total_distance = compute_distance(nav_times, distances, start_cut_abs, stop_cut_abs)
-                metadata.iat[0, 9] = total_distance
-                average_field_width = 0
-                if len(sample_start) > 0 and len(sample_stop) > 0:
-                    # compute covered distance for each sample
-                    for idx in range(len(sample_start)):
-                        start_sample = timedelta(seconds=sample_start[idx])
-                        stop_sample = timedelta(seconds=sample_stop[idx])
-                        start_sample_abs = start_cut_abs + start_sample
-                        stop_sample_abs = start_cut_abs + stop_sample
-                        dist = compute_distance(nav_times, distances, start_sample_abs, stop_sample_abs)
-                        new_row = pd.Series([start_sample, stop_sample, start_sample_abs, stop_sample_abs, dist], index=metadata.columns[5:10], name="sample {}".format(idx))
-                        new_row = new_row.astype(str).str.split(' ').str[-1]
-                        if not "sample {}".format(idx) in metadata.index:
-                            metadata = pd.concat([metadata, new_row.to_frame().T])
-                        else:
-                            metadata.loc["sample {}".format(idx), metadata.columns[5:10]] = new_row
-
-                        # if laser tracks detected compute average field widths for each sample
-                        if laser_tracks and idx in laser_tracks[videoname]:
-                            sample_field_width = 0
-                            pair_tracks = laser_tracks[videoname][idx]
-                            if len(pair_tracks) < 2:
-                                print("Error: can't find laser couple tracks for annotation {}. sample_start[{}] = {})".format(video_annotation_label_id, idx, sample_start[idx]))
+                distances = []
+                dist_mask = data_nav.columns.str.startswith(('Dist', 'dist', 'DIST'))
+                dist_idx = np.where(dist_mask == True)[0][0]
+                distances = pd.to_numeric(data_nav.iloc[:, dist_idx])
+                if len(distances) > 0 and start_cut_abs and stop_cut_abs:
+                    total_distance = compute_distance(nav_times, distances, start_cut_abs, stop_cut_abs)
+                    metadata.iat[0, 9] = total_distance
+                    average_field_width = 0
+                    if len(sample_start) > 0 and len(sample_stop) > 0:
+                        # compute covered distance for each sample
+                        for idx in range(len(sample_start)):
+                            start_sample = timedelta(seconds=sample_start[idx])
+                            stop_sample = timedelta(seconds=sample_stop[idx])
+                            start_sample_abs = start_cut_abs + start_sample
+                            stop_sample_abs = start_cut_abs + stop_sample
+                            dist = compute_distance(nav_times, distances, start_sample_abs, stop_sample_abs)
+                            new_row = pd.Series([start_sample, stop_sample, start_sample_abs, stop_sample_abs, dist], index=metadata.columns[5:10], name="sample {}".format(idx))
+                            new_row = new_row.astype(str).str.split(' ').str[-1]
+                            if not "sample {}".format(idx) in metadata.index:
+                                metadata = pd.concat([metadata, new_row.to_frame().T])
                             else:
-                                track_l1 = pair_tracks[0]
-                                track_l2 = pair_tracks[1]
-                            kfs_l2 = list(track_l2.keys())
-                            for k, icoords_l1 in track_l1.items():
-                                # laser annotation should be point or circle, keep only 2 first coordinates x,y
-                                icoords_l1 = icoords_l1[0:2]
-                                if k in track_l2:
-                                    icoords_l2 = track_l2[k][0:2]
+                                metadata.loc["sample {}".format(idx), metadata.columns[5:10]] = new_row
+
+                            # if laser tracks detected compute average field widths for each sample
+                            if laser_tracks and idx in laser_tracks[videoname]:
+                                sample_field_width = 0
+                                pair_tracks = laser_tracks[videoname][idx]
+                                if len(pair_tracks) < 2:
+                                    print("Error: can't find laser couple tracks for annotation {}. sample_start[{}] = {})".format(video_annotation_label_id, idx, sample_start[idx]))
                                 else:
-                                    pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
-                                    tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
-                                    # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
-                                    cmin, cmax = track_l2[tmin], track_l2[tmax]
-                                    coeff = (k - tmin) / (tmax - tmin)
-                                    icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
-                                dist_lasers_px = math.dist(icoords_l1, icoords_l2)
-                                if dist_lasers_px > 0:
-                                    sample_field_width += 1/dist_lasers_px
-                            # laser_dist is in cm, we want field_width in m
-                            sample_field_width = sample_field_width * laser_dist * width / float(len(track_l1)*100)
-                            average_field_width += sample_field_width
-                            if "sample {}".format(idx) in metadata.index:
-                                metadata.loc["sample {}".format(idx), metadata.columns[10]] = sample_field_width
-                                metadata.loc["sample {}".format(idx), metadata.columns[11]] = dist * sample_field_width
-                    average_field_width /= len(sample_start)
-                    metadata.iat[0, 10] = average_field_width
-                    metadata.iat[0, 11] = total_distance * average_field_width
-                # compute average field width by looping through laser tracks
-                elif laser_tracks:
-                    track_l1 = laser_tracks[videoname][0]
-                    track_l2 = laser_tracks[videoname][1]
-                    kfs_l2 = list(track_l2.keys())
-                    for k, icoords_l1 in track_l1.items():
-                        icoords_l1 = icoords_l1[0:2]
-                        if k in track_l2:
-                            icoords_l2 = track_l2[k][0:2]
-                        else:
-                            pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
-                            tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
-                            # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
-                            cmin, cmax = track_l2[tmin], track_l2[tmax]
-                            coeff = (k - tmin) / (tmax - tmin)
-                            icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
-                        dist_lasers_px = math.dist(icoords_l1, icoords_l2)
-                        if dist_lasers_px > 0:
-                            average_field_width += 1/dist_lasers_px
-                    # laser_dist is in cm, we want field_width in m
-                    average_field_width = average_field_width * laser_dist * width / float(len(track_l1) * 100)
-                    metadata.iat[0, 10] = average_field_width
-                    metadata.iat[0, 11] = total_distance * average_field_width
+                                    track_l1 = pair_tracks[0]
+                                    track_l2 = pair_tracks[1]
+                                kfs_l2 = list(track_l2.keys())
+                                for k, icoords_l1 in track_l1.items():
+                                    # laser annotation should be point or circle, keep only 2 first coordinates x,y
+                                    icoords_l1 = icoords_l1[0:2]
+                                    if k in track_l2:
+                                        icoords_l2 = track_l2[k][0:2]
+                                    else:
+                                        pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
+                                        tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
+                                        # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
+                                        cmin, cmax = track_l2[tmin], track_l2[tmax]
+                                        coeff = (k - tmin) / (tmax - tmin)
+                                        icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
+                                    dist_lasers_px = math.dist(icoords_l1, icoords_l2)
+                                    if dist_lasers_px > 0:
+                                        sample_field_width += 1/dist_lasers_px
+                                # laser_dist is in cm, we want field_width in m
+                                sample_field_width = sample_field_width * laser_dist * width / float(len(track_l1)*100)
+                                average_field_width += sample_field_width
+                                if "sample {}".format(idx) in metadata.index:
+                                    metadata.loc["sample {}".format(idx), metadata.columns[10]] = sample_field_width
+                                    metadata.loc["sample {}".format(idx), metadata.columns[11]] = dist * sample_field_width
+                        average_field_width /= len(sample_start)
+                        metadata.iat[0, 10] = average_field_width
+                        metadata.iat[0, 11] = total_distance * average_field_width
+                    # compute average field width by looping through laser tracks
+                    elif laser_tracks:
+                        track_l1 = laser_tracks[videoname][0]
+                        track_l2 = laser_tracks[videoname][1]
+                        kfs_l2 = list(track_l2.keys())
+                        for k, icoords_l1 in track_l1.items():
+                            icoords_l1 = icoords_l1[0:2]
+                            if k in track_l2:
+                                icoords_l2 = track_l2[k][0:2]
+                            else:
+                                pos = min(bisect_right(kfs_l2, k), len(kfs_l2)-1)
+                                tmin, tmax = kfs_l2[pos-1], kfs_l2[pos]
+                                # interpolate coordinates of lasers l2 at time k according to coordinates at tmin and tmax
+                                cmin, cmax = track_l2[tmin], track_l2[tmax]
+                                coeff = (k - tmin) / (tmax - tmin)
+                                icoords_l2 = (cmin[0] + coeff * (cmax[0] - cmin[0]), cmin[1] + coeff * (cmax[1] - cmin[1]))
+                            dist_lasers_px = math.dist(icoords_l1, icoords_l2)
+                            if dist_lasers_px > 0:
+                                average_field_width += 1/dist_lasers_px
+                        # laser_dist is in cm, we want field_width in m
+                        average_field_width = average_field_width * laser_dist * width / float(len(track_l1) * 100)
+                        metadata.iat[0, 10] = average_field_width
+                        metadata.iat[0, 11] = total_distance * average_field_width
 
         contributors = set()
         for row in data_video.itertuples():
@@ -1141,19 +1146,22 @@ def eco_profiler(
             laser_dist_px = None
             annot_size_px = None
             annot_size = None
-            if not laser_tracks or len(times) == 1:
+            if shape_id == 7: # whole frame annotation
+                t_min = float(times[0])
+            elif not laser_tracks:    # or len(times) == 1:
                 # if no laser tracks, take the last keytime of annotation to get timestamp and GPS position, as we assume it is the closest position to camera, where measures are made
                 t_min = float(times[-1])
-                if shape_id != 7:     # not whole frame annotation
-                    coords = points[-1]
-                    coords = coords.split(',')
-                    coords = [float(c) for c in coords]
-                    n = float(len(coords)/2)
-                    # except for points or circles, compute the barycenter of the annotation
-                    if shape_id != 1 and shape_id != 4:
-                        c_min = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
-                    else:
-                        c_min = (coords[0], coords[1])
+                # if shape_id != 7:     # not whole frame annotation
+                coords = points[-1]
+                coords = coords.split(',')
+                coords = [float(c) for c in coords]
+                n = float(len(coords)/2)
+                # except for points or circles, compute the barycenter of the annotation
+                if shape_id != 1 and shape_id != 4:
+                    c_min = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
+                else:
+                    c_min = (coords[0], coords[1])
+                annot_size_px = measure_annot_size(coords, shape_id)
             else:
                 track_l1, track_l2 = None, None
                 # search for tracks in laser_tracks corresponding to this video
@@ -1259,12 +1267,13 @@ def eco_profiler(
                 out_data.at[row.Index, "label_hierarchy"] = row.label_hierarchy
             if t_min != None:
                 out_data.at[row.Index, "keytime (s)"] = round(t_min, 2)
-                try:
-                    timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, start_cut_abs)
-                    out_data.at[row.Index, "timestamp"] = timestamp
-                    out_data.at[row.Index, "annotation_GPS_position (lat, lon)"] = latitude, longitude
-                except ValueError as e:
-                    print("Error: failed to interpolate nav data at {}, skip.".format(t_min), e)
+                if nav_path:
+                    try:
+                        timestamp, latitude, longitude = interpolate_nav_data(nav_days, nav_times, latitudes, longitudes, t_min, start_cut_abs)
+                        out_data.at[row.Index, "timestamp"] = timestamp
+                        out_data.at[row.Index, "annotation_GPS_position (lat, lon)"] = latitude, longitude
+                    except ValueError as e:
+                        print("Error: failed to interpolate nav data at {}, skip.".format(t_min), e)
             else:
                 print("could not find t_min for annotation {}".format(video_annotation_label_id))
             if l1_pos and l2_pos:
