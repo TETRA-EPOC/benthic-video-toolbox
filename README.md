@@ -25,6 +25,8 @@ Or, on windows:
   `python -m venv .bvt`
   `.\.bvt\Scripts\activate`
 
+Note: I had issues using pysinstaller with python3.12 (when opening bundled app I get error message "DLL load failed while importing pyexpat"). As a workaround I used python3.8 env to bundle app with pyinstaller.
+
 Then all dependencies with `requirements.txt` file:
   `pip install -r requirements.txt`
 
