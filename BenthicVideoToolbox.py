@@ -550,9 +550,17 @@ class PostprocessPage(tk.Frame):
         elif mode == "automatic":
             coco_path = self.coco_entry.get()
             preprocessTab = app.tabControl.nametowidget(app.tabControl.tabs()[0])
-            video_path = preprocessTab.video_entry.get()
+            video_path = preprocessTab.cut_video_string.get()
+            # if cut video file not filled try to get source video file
             if (not video_path):
-                video_path = filedialog.askopenfilename(parent=self, title="Choose a video file to perform laserpoints detection on", filetypes=[('all', '*'), ('avi videos', '*.avi'), ('mp4 videos', '*.mp4')])
+                source = preprocessTab.video_entry.get()
+                if source:
+                    videoname = pl.Path(source).name
+                    if messagebox.askyesno(message="Was the video {} cut before being annotated ?".format(videoname)):
+                        video_path = filedialog.askopenfilename(parent=self, title="Choose a video file to perform laserpoints detection on", filetypes=[('all', '*'), ('avi videos', '*.avi'), ('mp4 videos', '*.mp4')])
+                        video_path = update_path(video_path, preprocessTab.cut_video_entry)
+                    else:
+                        video_path = source
                 if not video_path:      # if user cancelled command
                     return
             v = pl.Path(video_path)
