@@ -722,7 +722,7 @@ def eco_profiler(
     def measure_annot_size(annot_coords, annot_shape_id):
         # point annotation, skip size measurement
         if annot_shape_id == 1:
-            pass
+            return
         # for circles we take diameter (2 * third coordinate) as size
         elif annot_shape_id == 4:
             annot_size_px = 2*annot_coords[2]
@@ -740,7 +740,7 @@ def eco_profiler(
             annot_size_px = math.dist(pt1, pt2)
         else:
             messagebox.showerror("Error", "Annotation shape {} not supported, skipped.".format(annot_shape_id))
-            pass
+            return
         return annot_size_px
 
     # function that takes nav_times and distances pd.Series from nav file and compute covered distance between start and stop cut times
@@ -1069,19 +1069,22 @@ def eco_profiler(
             laser_dist_px = None
             annot_size_px = None
             annot_size = None
-            if not laser_tracks or len(times) == 1:
+            if shape_id == 7: # whole frame annotation
+                t_min = float(times[0])
+            elif not laser_tracks:    # or len(times) == 1:
                 # if no laser tracks, take the last keytime of annotation to get timestamp and GPS position, as we assume it is the closest position to camera, where measures are made
                 t_min = float(times[-1])
-                if shape_id != 7:     # not whole frame annotation
-                    coords = points[-1]
-                    coords = coords.split(',')
-                    coords = [float(c) for c in coords]
-                    n = float(len(coords)/2)
-                    # except for points or circles, compute the barycenter of the annotation
-                    if shape_id != 1 and shape_id != 4:
-                        c_min = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
-                    else:
-                        c_min = (coords[0], coords[1])
+                # if shape_id != 7:     # not whole frame annotation
+                coords = points[-1]
+                coords = coords.split(',')
+                coords = [float(c) for c in coords]
+                n = float(len(coords)/2)
+                # except for points or circles, compute the barycenter of the annotation
+                if shape_id != 1 and shape_id != 4:
+                    c_min = (sum(coords[::2]) / n, sum(coords[1::2]) / n)
+                else:
+                    c_min = (coords[0], coords[1])
+                annot_size_px = measure_annot_size(coords, shape_id)
             else:
                 track_l1, track_l2 = None, None
                 # search for tracks in laser_tracks corresponding to this video
