@@ -72,7 +72,7 @@ Note: If an error of type "cannot import name 'six' from 'pkg_resources.extern'"
 # Bundle exe application with pyinstaller
 
 On windows, go to your repo folder and run:
-  `pyinstaller -w -F --path ".bvt\Lib\site-packages" --icon "assets\icon2.ico" --add-data=".bvt\Lib\site-packages\tkinterDnD":. .\BenthicVideoToolbox.py`
+  `pyinstaller -w -F --path ".bvt\Lib\site-packages" --icon "assets\icon2.ico" --add-data="assets/:assets" --collect-all mmdet --collect-all mmengine --collect-all mmcv --noconfirm --add-data=".bvt\Lib\site-packages\tkinterDnD":. .\BenthicVideoToolbox.py`
 
 On linux:
-  `pyinstaller -w -F --add-data=".env/lib/python3.8/site-packages/tkinterDnD/linux":. BenthicVideoToolbox.py`
+  `pyinstaller -w -F --add-data="assets/:assets" --collect-all mmdet --collect-all mmengine --collect-all mmcv --noconfirm --add-data=".env/lib/python3.8/site-packages/tkinterDnD/linux":. BenthicVideoToolbox.py`
