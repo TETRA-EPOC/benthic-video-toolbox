@@ -1,5 +1,5 @@
 # Benthic Video Toolbox
-This is a standalone GUI application for pre and post processing of benthic video annotations with biigle. It has been developped as part of the FUTURE-OBS research project which aims to find innovative observation methods for coastal socio-ecosystem and is based on videos taken with the towed benthic sled **Pagure** developped by Ifremer. However it can be used and extended for other acquisition systems.
+This is a standalone GUI application for pre and post processing of benthic video annotations with biigle. It has been developped as part of the FUTURE-OBS research project which aims to find innovative observation methods for coastal socio-ecosystem and is based on videos taken with the towed benthic sled **Pagure**. However it can be used and extended for other acquisition systems.
 
 There are three main objectives to video annotations post-processing:
   1. Comprehensive biodiversity monitoring
