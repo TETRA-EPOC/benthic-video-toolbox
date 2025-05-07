@@ -643,8 +643,8 @@ class PostprocessPage(tk.Frame):
                 return
         else:
             mode = self.mode_combobox.get()
+            laser_label = self.laser_label_entry.get()
             if mode == "manual":
-                laser_label = self.laser_label_entry.get()
                 if not laser_label:
                     window = entryWindow(self, "Laser annotation label", "Enter the label used to annotate lasers in biigle:")
                     self.wait_window(window.top)
