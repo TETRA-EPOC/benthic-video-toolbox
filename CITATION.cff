@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+title: "Benthic Video Toolbox"
+message: "If you use this software, please cite it using these metadata."
+abstract: "This is a standalone GUI application for pre and post processing of benthic video annotations with biigle. It has been developed as part of the FUTURE-OBS research project which aims to find innovative observation methods for coastal socio-ecosystem and is based on videos taken with the towed benthic sled Pagure developped by Ifremer. However it can be used and extended for other acquisition systems."
+authors:
+    - family-names: LIBERGE
+      given-names: Anouk
+    - family-names: ROMERO RAMIREZ
+      given-names: Alicia
+      orcid: https://orcid.org/0000-0002-9167-3686
+keywords:
+    - oceanography
+    - biodiversity
+    - imaging
+license: GNU GPL V3.0 or later
+repository-code: "https://github.com/TETRA-EPOC/benthic-video-toolbox"

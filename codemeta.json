@@ -1,0 +1,51 @@
+{
+    "@context": "https://w3id.org/codemeta/3.0",
+    "type": "SoftwareSourceCode",
+    "applicationCategory": "Biological Oceanography",
+    "author": [
+        {
+            "id": "_:author_1",
+            "type": "Person",
+            "familyName": "Liberge",
+            "givenName": "Anouk"
+        },
+        {
+            "type": "Role",
+            "schema:author": "_:author_1",
+            "roleName": "Developer"
+        },
+        {
+            "id": "https://orcid.org/0000-0002-9167-3686",
+            "type": "Person",
+            "affiliation": {
+                "type": "Organization",
+                "name": "UMR CNRS 5805 EPOC - OASU"
+            },
+            "email": "alicia.romero-ramirez@u-bordeaux.fr",
+            "familyName": "Romero Ramirez",
+            "givenName": "Alicia"
+        }
+    ],
+    "codeRepository": "https://github.com/TETRA-EPOC/benthic-video-toolbox",
+    "dateModified": "2025-04-30",
+    "datePublished": "2025-04-30",
+    "description": "This is a standalone GUI application for pre and post processing of benthic video annotations with biigle. It has been developed as part of the FUTURE-OBS research project which aims to find innovative observation methods for coastal socio-ecosystem and is based on videos taken with the towed benthic sled Pagure. However it can be used and extended for other acquisition systems.",
+    "downloadUrl": "https://github.com/TETRA-EPOC/benthic-video-toolbox/releases/tag/v1.1",
+    "keywords": [
+        "biodiversity",
+        "image analysis",
+        "benthic compartment"
+    ],
+    "license": "https://spdx.org/licenses/GPL-3.0-or-later",
+    "name": "Benthic Video Toolbox",
+    "operatingSystem": [
+        "Linux",
+        "Windows",
+        "MacOS"
+    ],
+    "programmingLanguage": "Python 3",
+    "version": "v1.1",
+    "developmentStatus": "active",
+    "funding": "ANR-22-POCE-0004",
+    "issueTracker": "https://github.com/TETRA-EPOC/benthic-video-toolbox/issues"
+}
